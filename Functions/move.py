@@ -1,8 +1,10 @@
 # Archivo: Ks7/Functions/move.py
 # Ubicación: ~/sim_ws_qupa/Ks7/Functions/move.py
 # Descripción:
-#   Módulo compartido de movimiento y navegación para los Qupa en ROS 2 + Gazebo:
+#   Módulo compartido de movimiento y navegación para los Qupa en ROS 2 (Simulación y Hardware Real):
 #   move, r_move, redondear_resolucion, RandomWalking, navegar_a_coordenadas y Save_position.
+#   Ejecuta el control de movimiento en lazo abierto por velocidad enviada y tiempo transcurrido,
+#   e integra cinemáticamente (x, y, yaw) cuando el robot opera sin tópico /odom (Qupa real).
 #   Respeta fielmente las velocidades speed_d, speed_g, d_speed y g_speed definidas en el controlador.
 #   Equivalente 1:1 de Ks7/Functions/move.lua.
 
@@ -16,6 +18,23 @@ from Functions import utils as utils_mod
 
 def _norm_rad(a: float) -> float:
     return math.atan2(math.sin(a), math.cos(a))
+
+
+def _integrate_open_loop_pose(rob, dt: float):
+    """
+    Integra la pose (x, y, yaw) en lazo abierto a partir de las velocidades comandadas
+    (cmd_linear_x, cmd_angular_z) y el paso de tiempo dt cuando no existe tópico /odom
+    (robots físicos Qupa sin encoders).
+    """
+    if getattr(rob, 'odom_received', False):
+        return
+    if dt <= 0.0:
+        return
+    v = float(getattr(rob, 'cmd_linear_x', 0.0))
+    w = float(getattr(rob, 'cmd_angular_z', 0.0))
+    rob.yaw = _norm_rad(float(getattr(rob, 'yaw', 0.0)) + w * dt)
+    rob.x = float(getattr(rob, 'x', 0.0)) + v * math.cos(rob.yaw) * dt
+    rob.y = float(getattr(rob, 'y', 0.0)) + v * math.sin(rob.yaw) * dt
 
 
 # ============================================================================
@@ -97,6 +116,10 @@ def set_wheels_cm_s(rob, left_cm_s: float, right_cm_s: float, interwheel_distanc
         rob.cmd_linear_x = v_avg_cm_s / 100.0
         rob.cmd_angular_z = (right_cm_s - left_cm_s) / L
 
+    tps = float(getattr(rob, 'ticks_per_second', shared_config.get_controller_var("ticks_per_second", 4.0)))
+    dt = 1.0 / tps if tps > 0.0 else 0.25
+    _integrate_open_loop_pose(rob, dt)
+
 
 def move(
     rob,
@@ -107,9 +130,19 @@ def move(
     timer: int = 1,
     stop: bool = False,
 ):
-    """Controlador en lazo cerrado por odometría real (equivalente 1:1 de move en Functions/move.lua)."""
+    """
+    Controlador en lazo abierto por velocidad y tiempo transcurrido (equivalente 1:1 de move en Functions/move.lua).
+    Fase 1 (c1 == 0): Envía velocidad angular constante speed_g durante el tiempo t_ang = |target_angle| / |speed_g|.
+    Fase 2 (c1 == 1): Envía velocidad lineal constante speed_d durante el tiempo t_dis = |distance| / |speed_d|.
+    Además integra (rob.x, rob.y, rob.yaw) en lazo abierto si no hay tópico /odom.
+    """
     global c1, c2, move_controller, move_distance, move_angle
-    tps = getattr(rob, 'ticks_per_second', shared_config.get_controller_var("ticks_per_second", 4.0))
+    global ticks_needed, actual_dis_ticks, angle_ticks_needed, actual_ang_ticks
+    global time_needed, wheel_speed, omega_rad
+
+    tps = float(getattr(rob, 'ticks_per_second', shared_config.get_controller_var("ticks_per_second", 4.0)))
+    dt = 1.0 / tps if tps > 0.0 else 0.25
+
     utils_mod.Temporizador_2(rob, 0.3, tps)
     if stop or rob.temp_2:
         rob.cmd_linear_x = 0.0
@@ -125,109 +158,128 @@ def move(
 
     rob.move_controller = -1 if distance < 0 else 1
     move_controller = rob.move_controller
-    target_dist_m = abs(distance) / 100.0
 
-    # Respeta exactamente speed_d (cm/s -> m/s) y speed_g (°/s -> rad/s), incluyendo 0.0
-    max_lin_m_s = abs(float(speed_d)) / 100.0
-    max_ang_rad_s = math.radians(abs(float(speed_g)))
+    target_ang_deg = abs(float(target_angle))
+    target_dist_cm = abs(float(distance))
+
+    abs_speed_g_deg_s = abs(float(speed_g))
+    abs_speed_d_cm_s = abs(float(speed_d))
+
+    max_lin_m_s = abs_speed_d_cm_s / 100.0
+    max_ang_rad_s = math.radians(abs_speed_g_deg_s)
+
+    if not hasattr(rob, 'elapsed_ang_s'):
+        rob.elapsed_ang_s = 0.0
+    if not hasattr(rob, 'elapsed_dis_s'):
+        rob.elapsed_dis_s = 0.0
+    if not hasattr(rob, 'actual_ang_ticks'):
+        rob.actual_ang_ticks = 0
+    if not hasattr(rob, 'actual_dis_ticks'):
+        rob.actual_dis_ticks = 0
 
     # ===============================
-    # Fase 1: Giro
+    # Fase 1: Giro en Lazo Abierto
     # ===============================
     if rob.c1 == 0:
-        if rob.seg_start_yaw is None:
-            rob.seg_start_yaw = rob.yaw
-            rob.seg_target_yaw = _norm_rad(rob.yaw + math.radians(target_angle))
-
-        if abs(target_angle) < 0.5:
+        if target_ang_deg < 0.5:
             rob.cmd_linear_x = 0.0
             rob.cmd_angular_z = 0.0
             rob.move_angle = 0.0
+            rob.elapsed_ang_s = 0.0
+            rob.actual_ang_ticks = 0
             rob.c1 = 1
-            rob.seg_start_x = rob.x
-            rob.seg_start_y = rob.y
         else:
-            if max_ang_rad_s <= 1e-6:
+            if abs_speed_g_deg_s <= 1e-6:
                 rob.cmd_linear_x = 0.0
                 rob.cmd_angular_z = 0.0
                 c1, c2 = rob.c1, rob.c2
                 move_distance, move_angle = rob.move_distance, rob.move_angle
                 return rob.c2, rob.c1, rob.move_distance, rob.move_angle
 
-            err_yaw = _norm_rad(rob.seg_target_yaw - rob.yaw)
-            rob.move_angle = _norm_rad(rob.yaw - rob.seg_start_yaw)
-            if abs(err_yaw) <= math.radians(1.8):
+            ang_time_needed = target_ang_deg / abs_speed_g_deg_s
+            angle_ticks_needed = int(math.ceil(ang_time_needed * tps))
+            ang_sign = 1.0 if target_angle > 0.0 else -1.0
+
+            if rob.elapsed_ang_s + 1e-9 >= ang_time_needed:
                 rob.cmd_linear_x = 0.0
                 rob.cmd_angular_z = 0.0
+                rob.move_angle = math.radians(target_angle)
                 rob.c1 = 1
-                rob.seg_start_x = rob.x
-                rob.seg_start_y = rob.y
             else:
-                # Gira a velocidad constante max_ang_rad_s y solo desacelera suavemente en los últimos 8°
-                slowdown_rad = math.radians(8.0)
-                if abs(err_yaw) < slowdown_rad:
-                    ratio = max(0.25, abs(err_yaw) / slowdown_rad)
-                    omega_mag = max_ang_rad_s * ratio
-                else:
-                    omega_mag = max_ang_rad_s
-                omega = omega_mag if err_yaw > 0 else -omega_mag
+                # Tiempo restante de giro en este paso dt
+                rem_time_s = ang_time_needed - rob.elapsed_ang_s
+                omega_cmd = max_ang_rad_s * ang_sign
                 rob.cmd_linear_x = 0.0
-                rob.cmd_angular_z = omega
+                rob.cmd_angular_z = omega_cmd
+
+                step_dt = min(dt, rem_time_s)
+                _integrate_open_loop_pose(rob, step_dt)
+
+                rob.elapsed_ang_s += dt
+                rob.actual_ang_ticks += 1
+                actual_ang_ticks = rob.actual_ang_ticks
+
+                turned_deg = min(target_ang_deg, rob.elapsed_ang_s * abs_speed_g_deg_s)
+                rob.move_angle = math.radians(turned_deg * ang_sign)
+
+                # Si con este tick ya se completó el tiempo de giro, avanzamos a c1 = 1 para el siguiente tick
+                if rob.elapsed_ang_s + 1e-9 >= ang_time_needed:
+                    rob.move_angle = math.radians(target_angle)
+
                 c1, c2 = rob.c1, rob.c2
                 move_distance, move_angle = rob.move_distance, rob.move_angle
                 return rob.c2, rob.c1, rob.move_distance, rob.move_angle
 
     # ===============================
-    # Fase 2: Movimiento lineal
+    # Fase 2: Avance Lineal en Lazo Abierto
     # ===============================
     if rob.c1 == 1:
-        if rob.seg_start_x is None:
-            rob.seg_start_x = rob.x
-            rob.seg_start_y = rob.y
-
-        if target_dist_m < 0.005:
+        if target_dist_cm < 0.5:
             rob.cmd_linear_x = 0.0
             rob.cmd_angular_z = 0.0
             rob.move_distance = 0.0
+            rob.elapsed_dis_s = 0.0
+            rob.actual_dis_ticks = 0
             rob.c1 = 2
             rob.c2 += 1
-            rob.seg_start_x = None
-            rob.seg_start_y = None
-            rob.seg_start_yaw = None
             utils_mod.r_Temporizador_2(rob)
         else:
-            if max_lin_m_s <= 1e-6:
+            if abs_speed_d_cm_s <= 1e-6:
                 rob.cmd_linear_x = 0.0
                 rob.cmd_angular_z = 0.0
                 c1, c2 = rob.c1, rob.c2
                 move_distance, move_angle = rob.move_distance, rob.move_angle
                 return rob.c2, rob.c1, rob.move_distance, rob.move_angle
 
-            traveled_m = math.hypot(rob.x - rob.seg_start_x, rob.y - rob.seg_start_y)
-            rob.move_distance = (traveled_m * 100.0) * rob.move_controller
-            rem_m = target_dist_m - traveled_m
-            if rem_m <= 0.008:
+            dis_time_needed = target_dist_cm / abs_speed_d_cm_s
+            time_needed = dis_time_needed
+            ticks_needed = int(math.ceil(dis_time_needed * tps))
+
+            if rob.elapsed_dis_s + 1e-9 >= dis_time_needed:
                 rob.cmd_linear_x = 0.0
                 rob.cmd_angular_z = 0.0
-                rob.move_distance = distance
+                rob.move_distance = float(distance)
                 rob.c1 = 2
                 rob.c2 += 1
-                rob.seg_start_x = None
-                rob.seg_start_y = None
-                rob.seg_start_yaw = None
                 utils_mod.r_Temporizador_2(rob)
             else:
-                # Avanza a velocidad constante max_lin_m_s (speed_d) y solo desacelera en los últimos 2 cm
-                slowdown_m = 0.02
-                if rem_m < slowdown_m:
-                    ratio = max(0.30, rem_m / slowdown_m)
-                    v_lin = (max_lin_m_s * ratio) * rob.move_controller
-                else:
-                    v_lin = max_lin_m_s * rob.move_controller
-                heading_err = _norm_rad(rob.seg_target_yaw - rob.yaw) if rob.seg_target_yaw is not None else 0.0
-                heading_corr_cap = max(0.1, min(0.8, max_ang_rad_s if max_ang_rad_s > 0.0 else 0.8))
-                rob.cmd_linear_x = v_lin
-                rob.cmd_angular_z = max(-heading_corr_cap, min(heading_corr_cap, 2.0 * heading_err))
+                rem_time_s = dis_time_needed - rob.elapsed_dis_s
+                v_cmd = max_lin_m_s * float(rob.move_controller)
+                rob.cmd_linear_x = v_cmd
+                rob.cmd_angular_z = 0.0
+
+                step_dt = min(dt, rem_time_s)
+                _integrate_open_loop_pose(rob, step_dt)
+
+                rob.elapsed_dis_s += dt
+                rob.actual_dis_ticks += 1
+                actual_dis_ticks = rob.actual_dis_ticks
+
+                traveled_cm = min(target_dist_cm, rob.elapsed_dis_s * abs_speed_d_cm_s)
+                rob.move_distance = traveled_cm * float(rob.move_controller)
+
+                if rob.elapsed_dis_s + 1e-9 >= dis_time_needed:
+                    rob.move_distance = float(distance)
 
     c1, c2 = rob.c1, rob.c2
     move_distance, move_angle = rob.move_distance, rob.move_angle
@@ -267,6 +319,10 @@ def r_move(rob):
     rob.move_controller = 1
     rob.move_distance = 0.0
     rob.move_angle = 0.0
+    rob.elapsed_ang_s = 0.0
+    rob.elapsed_dis_s = 0.0
+    rob.actual_ang_ticks = 0
+    rob.actual_dis_ticks = 0
     rob.seg_start_x = None
     rob.seg_start_y = None
     rob.seg_start_yaw = None

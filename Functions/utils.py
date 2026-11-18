@@ -1,10 +1,10 @@
 # Archivo: Ks7/Functions/utils.py
 # Ubicación: ~/sim_ws_qupa/Ks7/Functions/utils.py
 # Descripción:
-#   Módulo compartido de utilidades para los Qupa en ROS 2 + Gazebo:
-#   temporizadores (Temporizador_1, Temporizador_2), control de LEDs (setleds),
-#   determinación de rol, diccionario de figuras geométricas (original_params),
-#   y funciones auxiliares de impresión.
+#   Módulo compartido de utilidades para los Qupa en ROS 2 (Simulación y Hardware Real):
+#   temporizadores (Temporizador_1, Temporizador_2), control de LEDs (setleds con soporte
+#   para servicio físico APA102 /<robot_id>/set y Gazebo), determinación de rol,
+#   diccionario de figuras geométricas (original_params) y funciones auxiliares de impresión.
 #   Equivalente 1:1 de Ks7/Functions/utils.lua.
 
 import json
@@ -17,6 +17,13 @@ try:
     from std_msgs.msg import String
 except ImportError:
     String = None
+
+try:
+    from qupa_msgs.srv import LEDCommand
+    HAS_QUPA_LED_SRV = True
+except ImportError:
+    LEDCommand = None
+    HAS_QUPA_LED_SRV = False
 
 try:
     from gz.msgs10.material_color_pb2 import MaterialColor
@@ -90,15 +97,46 @@ def r_Temporizador_2(rob):
 # ============================================================================
 # 2. CONTROL DE LEDS Y ROL
 # ============================================================================
-def setleds(rob, color: str, led_pub=None, gz_mat_pub=None, force_topic_pub: bool = False):
+def setleds(
+    rob,
+    color: str,
+    led_pub=None,
+    gz_mat_pub=None,
+    force_topic_pub: bool = False,
+    led_srv_client=None,
+):
     changed = (rob.led_color != color)
     rob.led_color = color
 
+    # 1) Tópico de simulación (/leds/color)
     if (changed or force_topic_pub) and led_pub is not None and String is not None:
         msg = String()
         msg.data = json.dumps({"color": color})
         led_pub.publish(msg)
 
+    # 2) Servicio físico del Qupa real (/<robot_id>/set -> qupa_msgs/srv/LEDCommand)
+    # Se invoca únicamente cuando el color cambia para no saturar el bus SPI0 de la Raspberry Pi.
+    # Nota: "yellow" (color lógico de demostración del Maestro en ARGoS3) se mapea a RGB Azul [0, 0, 255]
+    # porque camera_node.py del Qupa real detecta el rango HSV BLUE y apprentice_entries lo traduce a "yellow".
+    if changed and led_srv_client is not None and HAS_QUPA_LED_SRV:
+        try:
+            hw_rgb_map = {
+                "yellow": [0, 0, 255],
+                "blue":   [0, 0, 255],
+                "green":  [0, 255, 0],
+                "red":    [255, 0, 0],
+            }
+            req = LEDCommand.Request()
+            if color in hw_rgb_map:
+                req.command = json.dumps({"mode": "set_all", "rgb": hw_rgb_map[color]})
+            else:
+                req.command = json.dumps({"mode": "clear"})
+            if led_srv_client.service_is_ready():
+                led_srv_client.call_async(req)
+        except Exception:
+            pass
+
+    # 3) MaterialColor para visualización en Gazebo
     if (changed or force_topic_pub) and gz_mat_pub is not None and HAS_GZ_MESSAGES:
         try:
             palette = {
@@ -163,7 +201,8 @@ def asignar_figura_por_id(robot_id: str, figura_actual: str = "", distance_facto
         return "octagono", 1.0
     if robot_id in ("Qupa0", "Qupa1"):
         return "Pentágono_irregular", 1.0
-    return "", distance_factor
+    # Respaldo para IDs de robots físicos reales (ej. qupa_D2, qupa_3A, etc.) cuando actúan como Maestro
+    return "Pentágono_irregular", distance_factor
 
 
 def original_params(figura: str, distance_factor: float = 1.0) -> dict:

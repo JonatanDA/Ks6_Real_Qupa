@@ -2,9 +2,9 @@
 # Archivo: Ks7/Ks7_master_controller.py
 # Ubicación: ~/sim_ws_qupa/Ks7/Controller/Ks7_master_controller.py
 # Descripción:
-#   Controlador dedicado y autónomo de un robot Maestro (1 nodo = 1 robot, ej. Qupa0, Qupa1, ...)
-#   en ROS 2 Jazzy + Gazebo Harmonic. Define las variables globales de los maestros en un único
-#   lugar y las propaga a los submódulos (shared_config, Move, Utils, Sensors) sin ser sobrescritas.
+#   Controlador dedicado y autónomo de un robot Maestro (1 nodo = 1 robot, ej. Qupa0, Qupa1, qupa_D2)
+#   en ROS 2 Jazzy (Gazebo Harmonic y Hardware Físico Real Qupa). Define las variables globales de los
+#   maestros en un único lugar y las propaga a los submódulos (shared_config, Move, Utils, Sensors).
 #   Equivalente 1:1 de Ks7/Controller/Ks7_master_controller.lua.
 
 import json
@@ -30,6 +30,10 @@ sys.modules["ks7_master_controller"] = sys.modules[__name__]
 # ============================================================================
 random.seed(time.time())
 
+# Nota Hardware Real Qupa:
+# - motor_driver_node tiene un watchdog de 0.3s (requiere ticks_per_second >= 4, recomendable 8-10 en físico)
+#   y un deadband de 0.03 m/s por rueda con wheel_base = 0.086 m (para girar en su propio eje en el
+#   robot físico se requiere velocidad angular >= 42 °/s, ej. speed_dem_g = 45, g_speed = 60).
 ticks_per_second                    = 4
 max_time                            = 5000 * ticks_per_second
 Distribucion_sensores_de_proximidad = [0, -45, 45, -90, 90, 180]
@@ -64,6 +68,13 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
+
+try:
+    from qupa_msgs.srv import LEDCommand
+    HAS_QUPA_LED_SRV = True
+except ImportError:
+    LEDCommand = None
+    HAS_QUPA_LED_SRV = False
 
 try:
     from gz.transport13 import Node as GzNode
@@ -326,18 +337,25 @@ class Ks7MasterControllerNode(Node):
         global _active_master_node, _active_master_rob
 
         cli_robot_id = ""
+        cli_use_sim_time = True
         for idx, arg in enumerate(sys.argv):
             if arg.startswith("robot_id:="):
                 cli_robot_id = arg.split(":=", 1)[1].strip()
             elif arg in ("-p", "--param") and idx + 1 < len(sys.argv) and sys.argv[idx + 1].startswith("robot_id:="):
                 cli_robot_id = sys.argv[idx + 1].split(":=", 1)[1].strip()
+            elif arg.startswith("use_sim_time:="):
+                cli_use_sim_time = arg.split(":=", 1)[1].strip().lower() in ("true", "1", "yes")
+            elif arg in ("-p", "--param") and idx + 1 < len(sys.argv) and sys.argv[idx + 1].startswith("use_sim_time:="):
+                cli_use_sim_time = sys.argv[idx + 1].split(":=", 1)[1].strip().lower() in ("true", "1", "yes")
 
-        node_name = f"ks7_master_controller_{cli_robot_id.lower()}" if cli_robot_id else "ks7_master_controller_node"
+        safe_node_suffix = "".join(c if (c.isalnum() or c == "_") else "_" for c in cli_robot_id.lower())
+        node_name = f"ks7_master_controller_{safe_node_suffix}" if safe_node_suffix else "ks7_master_controller_node"
         super().__init__(
             node_name,
-            parameter_overrides=[Parameter('use_sim_time', Parameter.Type.BOOL, True)],
+            parameter_overrides=[Parameter('use_sim_time', Parameter.Type.BOOL, cli_use_sim_time)],
         )
         _active_master_node = self
+        self.use_sim_time_active = cli_use_sim_time
 
         self.declare_parameter('config_file', '/tmp/ks7_robots_config.json')
         self.declare_parameter('robot_id', cli_robot_id or '')
@@ -386,7 +404,7 @@ class Ks7MasterControllerNode(Node):
             rx = float(robot_entry.get('x', param_x))
             ry = float(robot_entry.get('y', param_y))
             ryaw = float(robot_entry.get('yaw', param_yaw))
-            fig = param_figura or str(robot_entry.get('figura', ''))
+            fig = param_figura or str(robot_entry.get('figura', '')) or "Pentágono_irregular"
             role = param_role or str(robot_entry.get('role', 'master'))
         else:
             r_id = param_robot_id or "Qupa0"
@@ -425,7 +443,7 @@ class Ks7MasterControllerNode(Node):
         )
 
         self.gz_mat_pub = None
-        if HAS_GZ_TRANSPORT:
+        if HAS_GZ_TRANSPORT and self.use_sim_time_active:
             try:
                 self.gz_node = GzNode()
                 self.gz_mat_pub = self.gz_node.advertise("/world/qupa_world/material_color", MaterialColor)
@@ -449,8 +467,12 @@ class Ks7MasterControllerNode(Node):
         _active_master_rob = self.rob
         self.robots = {self.robot_id: self.rob}
 
+        # Tópicos y servicios de actuación/sensado (compatibles con Gazebo y qupa_hardware real)
         self.cmd_vel_pub = self.create_publisher(Twist, f'/{self.robot_id}/cmd_vel', 10)
         self.led_pub = self.create_publisher(String, f'/{self.robot_id}/leds/color', 10)
+        self.led_srv_client = None
+        if HAS_QUPA_LED_SRV:
+            self.led_srv_client = self.create_client(LEDCommand, f'/{self.robot_id}/set')
 
         self.create_subscription(
             Odometry,
@@ -491,7 +513,19 @@ class Ks7MasterControllerNode(Node):
             led_pub=self.led_pub,
             gz_mat_pub=self.gz_mat_pub,
             force_topic_pub=force_topic_pub,
+            led_srv_client=self.led_srv_client,
         )
+
+    def stop_hardware(self):
+        """Detiene motores y apaga la tira LED APA102 al cerrar el controlador."""
+        try:
+            twist = Twist()
+            twist.linear.x = 0.0
+            twist.angular.z = 0.0
+            self.cmd_vel_pub.publish(twist)
+            self._set_led(self.rob, "black", force_topic_pub=True)
+        except Exception:
+            pass
 
     def init(self):
         self.rob.determinar_rol(shared_config.log_py)
@@ -506,7 +540,8 @@ class Ks7MasterControllerNode(Node):
     def step(self):
         global timer, _active_master_rob
         if not self.initialized:
-            if not self.rob.odom_received and (time.time() - self.start_wall_time) < 8.0:
+            # En simulación (use_sim_time=True) espera hasta 8s por /odom; en robot físico arranca de inmediato en lazo abierto
+            if self.use_sim_time_active and not self.rob.odom_received and (time.time() - self.start_wall_time) < 8.0:
                 return
             self.initialized = True
             self.init()
@@ -537,7 +572,7 @@ class Ks7MasterControllerNode(Node):
         pass
 
     def destroy(self):
-        pass
+        self.stop_hardware()
 
     def _scan_cb(self, msg: LaserScan):
         Sensors.process_laser_scan(self.rob, msg)
@@ -597,6 +632,7 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
+        node.stop_hardware()
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
