@@ -1,356 +1,434 @@
 #!/usr/bin/env python3
-# Archivo: scripts/run_sim_ros2_p0.py
-# Ubicación: ~/sim_ws_qupa/Ks7/scripts/run_sim_ros2_p0.py
+# Archivo: Ks7/Controller/Ks8_master_controller.py
+# Ubicación: ~/sim_ws_qupa/Ks7/Controller/Ks8_master_controller.py
 # Descripción:
-#   Orquestador secuencial en el robot físico Qupa (Raspberry Pi Zero W2).
-#   1) Lanza el stack de hardware (ros2 launch qupa_hardware hardware.launch.py namespace:=<id>)
-#      y espera a que se inicialicen secuencialmente los nodos (IR -> Motor -> Floor -> LED -> UV).
-#   2) Lanza opcionalmente la cámara (ros2 launch qupa_hardware camera.launch.py namespace:=<id>)
-#      si el rol es aprendiz o si AUTO_LAUNCH_CAMERA = True.
-#   3) Lanza finalmente el controlador seleccionado (por defecto Ks7_master_controller.py) con
-#      use_sim_time:=false para operar con el reloj real del robot.
-# Uso en la Raspberry Pi:
-#   python3 scripts/run_sim_ros2_p0.py
-#   python3 scripts/run_sim_ros2_p0.py --id qupa_D2 --role master --figura Pentágono_irregular
+#   Controlador interactivo de depuración (Ks8) para el robot físico Qupa.
+#   - Pide por terminal pares "distancia,angulo" (ej: 10,45 -> gira 45° y avanza 10 cm).
+#   - Tecla 'x' durante el movimiento: detiene el movimiento actual y pide un nuevo valor.
+#   - Tecla 'n' (en prompt o en movimiento): reinicia la odometría estimada a (0, 0).
+#   - Enciende LED azul una sola vez al iniciar movimiento y apaga al terminar.
 
-import os
-import sys
-import signal
-import subprocess
-import time
 import json
-import argparse
+import math
+import os
+import queue
+import random
+import select
+import sys
+import termios
+import threading
+import time
+import tty
 
-_THIS_FILE_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT_DIR = os.path.dirname(_THIS_FILE_DIR) if os.path.basename(_THIS_FILE_DIR) == "scripts" else _THIS_FILE_DIR
-CONFIG_JSON_PATH = f"/tmp/ks7_robot_config_p0_{os.getpid()}.json"
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(_THIS_DIR) if os.path.basename(_THIS_DIR) == "Controller" else _THIS_DIR
+for _p in (_THIS_DIR, _PROJECT_ROOT):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
-# =============================================================================
-# ---------- 1. DICCIONARIO DE EVALUADORES Y DEPENDENCIAS ----------
-# =============================================================================
-EVALUATOR_DEPENDENCIES = {
-    "scripts/evaluator_qi_noise.py": {"lua_functions": ["evaluator_ruido", "Print_tracker_calidad_imitacion_data"], "lua_variables": [], "run_sim_trackers": ["scripts/tracker_calidad_imitacion.py"]},
-    "scripts/evaluator_otsu.py": {"lua_functions": ["evaluator_otsu"], "lua_variables": [], "run_sim_trackers": []},
-    "scripts/evaluator_qi_speed_noise.py": {"lua_functions": ["evaluator_ruido"], "lua_variables": [], "run_sim_trackers": ["scripts/tracker_calidad_imitacion.py"]}
-}
+sys.modules["Controller.Ks8_master_controller"] = sys.modules[__name__]
+sys.modules["Ks8_master_controller"] = sys.modules[__name__]
 
-# =============================================================================
-# ---------- 2. DICCIONARIO DE TRACKERS Y DEPENDENCIAS LUA ----------
-# =============================================================================
-TRACKER_DEPENDENCIES = {
-    "tracker_python_gestor.py": {"funciones_lua": ["Print_tracker_python"], "variables_lua": []},
-    "tracker_trayectory.py": {"funciones_lua": ["Print_tracker_trayectory_data"], "variables_lua": ["displayed_data"]},
-    "tracker_paciencia.py": {"funciones_lua": ["Print_tracker_paciencia"], "variables_lua": []},
-    "tracker_AL_PID.py": {"funciones_lua": ["Print_tracker_AL_PID"], "variables_lua": []},
-    "tracker_calidad_imitacion.py": {"funciones_lua": ["Print_tracker_calidad_imitacion_data"], "variables_lua": []},
-    "tracker_varianza.py": {"funciones_lua": ["Print_tracker_varianza"], "variables_lua": []},
-    "evaluator_otsu.py": {"funciones_lua": ["evaluator_otsu"], "variables_lua": []},
-    "evaluator_qi_noise.py": {"funciones_lua": ["evaluator_ruido"], "variables_lua": []},
-    "evaluator_qi_speed_noise.py": {"funciones_lua": ["evaluator_ruido"], "variables_lua": []},
-}
+# ============================================================================
+#                               VARIABLES GLOBALES
+# ============================================================================
+random.seed(time.time())
 
-# =============================================================================
-# ---------- 3. SELECCIÓN DE CONTROLADOR Y CONFIGURACIÓN DEL ROBOT FÍSICO -----
-# =============================================================================
-DEFAULT_CONTROLLER_SCRIPTS = {
-    "master":          "Controller/Ks7_master_controller.py",
-    "apprentice":      "Controller/Ks7_apprentice_controller.py",
-}
+ticks_per_second                    = 8
+max_time                            = 5000 * ticks_per_second
+Distribucion_sensores_de_proximidad = [0, -45, 45, -90, 90, 180]
+Num_cantidad_leds                   = 2
+FOOTBOT_INTERWHEEL_DISTANCE         = 8.6
 
-# Controlador y parámetros por defecto cuando se ejecuta `python3 scripts/run_sim_ros2_p0.py`
-ACTIVE_ROLE_DEFAULT        = "master"
-ACTIVE_CONTROLLER_SCRIPT   = DEFAULT_CONTROLLER_SCRIPTS[ACTIVE_ROLE_DEFAULT]
-DEFAULT_ROBOT_ID           = "qupa_D2"
-DEFAULT_FIGURA             = "Pentágono_irregular"
-DEFAULT_INIT_X             = 0.0
-DEFAULT_INIT_Y             = 0.0
-DEFAULT_INIT_YAW           = 0.0
+factor_vel                          = 1
+speed_dem                           = 5 * factor_vel   # cm/s
+speed_dem_g                         = 50               # °/s
+d_speed                             = 6
+g_speed                             = 60
+distance_factor                     = 1
 
-# Lanzamiento secuencial automático de los drivers físicos (qupa_hardware)
-AUTO_LAUNCH_HARDWARE       = True
-# "AUTO": lanza camera.launch.py solo si el rol es "apprentice"; True: siempre; False: nunca
-AUTO_LAUNCH_CAMERA         = "AUTO"
-HARDWARE_LAUNCH_PACKAGE    = "qupa_hardware"
-HARDWARE_LAUNCH_FILE       = "hardware.launch.py"
-CAMERA_LAUNCH_FILE         = "camera.launch.py"
+from Functions import shared_config
+from Functions import sensors as Sensors
+from Functions import utils as Utils
+from Functions import move as Move
 
-# Tiempos de espera secuencial (en segundos):
-# hardware.launch.py escalona sus nodos en t=0s (IR), 3s (motor), 6s (floor), 9s (led), 10s (uv_led)
-WAIT_AFTER_HARDWARE_SEC    = 12.0
-# camera_node tiene warmup_s = 2.0s + inicialización de picamera2
-WAIT_AFTER_CAMERA_SEC      = 5.0
+shared_config.sync_from_controller(sys.modules[__name__])
 
-# =============================================================================
-# ---------- 4. CONFIGURACIÓN DE TRACKERS ACTIVOS (Señales a Emitir) ----------
-# =============================================================================
-TRACKERS = [
-    {"script": "scripts/tracker_trayectory.py", "args": []},
-    {"script": "scripts/tracker_paciencia.py", "args": []},
-    {"script": "scripts/tracker_calidad_imitacion.py", "args": []},
-    {"script": "scripts/tracker_varianza.py", "args": []},
-]
+import rclpy
+from rclpy.node import Node
+from rclpy.parameter import Parameter
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry
+from sensor_msgs.msg import LaserScan
+from std_msgs.msg import String
 
-# =============================================================================
-# ---------- 5. CONFIGURACIÓN DE VERBOSIDAD ----------
-# =============================================================================
-NIVEL_LOG = 2
+try:
+    from qupa_msgs.srv import LEDCommand
+    HAS_QUPA_LED_SRV = True
+except ImportError:
+    LEDCommand = None
+    HAS_QUPA_LED_SRV = False
+
+try:
+    from gz.transport13 import Node as GzNode
+    from gz.msgs10.material_color_pb2 import MaterialColor
+    HAS_GZ_TRANSPORT = True
+except ImportError:
+    HAS_GZ_TRANSPORT = False
 
 
-def print_log(msg):
-    if NIVEL_LOG >= 1:
-        sys.stdout.write(msg + "\n")
-        sys.stdout.flush()
+class Ks8MasterControllerNode(Node):
+    def __init__(self):
+        cli_robot_id = ""
+        cli_use_sim_time = False
+        for idx, arg in enumerate(sys.argv):
+            if arg.startswith("robot_id:="):
+                cli_robot_id = arg.split(":=", 1)[1].strip()
+            elif arg in ("-p", "--param") and idx + 1 < len(sys.argv) and sys.argv[idx + 1].startswith("robot_id:="):
+                cli_robot_id = sys.argv[idx + 1].split(":=", 1)[1].strip()
+            elif arg.startswith("use_sim_time:="):
+                cli_use_sim_time = arg.split(":=", 1)[1].strip().lower() in ("true", "1", "yes")
+            elif arg in ("-p", "--param") and idx + 1 < len(sys.argv) and sys.argv[idx + 1].startswith("use_sim_time:="):
+                cli_use_sim_time = sys.argv[idx + 1].split(":=", 1)[1].strip().lower() in ("true", "1", "yes")
 
+        safe_node_suffix = "".join(c if (c.isalnum() or c == "_") else "_" for c in cli_robot_id.lower())
+        node_name = f"ks8_master_controller_{safe_node_suffix}" if safe_node_suffix else "ks8_master_controller_node"
+        super().__init__(
+            node_name,
+            parameter_overrides=[Parameter('use_sim_time', Parameter.Type.BOOL, cli_use_sim_time)],
+        )
+        self.use_sim_time_active = cli_use_sim_time
 
-def terminate_process(proc, name="proceso"):
-    if proc is None or proc.poll() is not None:
-        return
-    print_log(f"[P0] Deteniendo {name}...")
-    try:
-        proc.terminate()
-        proc.wait(timeout=3.0)
-    except Exception:
+        self.declare_parameter('config_file', '/tmp/ks7_robots_config.json')
+        self.declare_parameter('robot_id', cli_robot_id or 'qupa_D2')
+        self.declare_parameter('figura', 'Manual_Ks8')
+        self.declare_parameter('role', 'master')
+        self.declare_parameter('init_x', 0.0)
+        self.declare_parameter('init_y', 0.0)
+        self.declare_parameter('init_yaw', 0.0)
+
+        config_file = self.get_parameter('config_file').get_parameter_value().string_value
+        param_robot_id = self.get_parameter('robot_id').get_parameter_value().string_value
+        param_figura = self.get_parameter('figura').get_parameter_value().string_value
+        param_role = self.get_parameter('role').get_parameter_value().string_value
+        rx = self.get_parameter('init_x').get_parameter_value().double_value
+        ry = self.get_parameter('init_y').get_parameter_value().double_value
+        ryaw = math.radians(self.get_parameter('init_yaw').get_parameter_value().double_value)
+
+        if config_file and os.path.exists(config_file):
+            try:
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                shared_config.apply_injected_vars(data.get('vars', {}) or {}, sys.modules[__name__])
+            except Exception:
+                pass
+
+        self.robot_id = param_robot_id or "qupa_D2"
+
+        qos_init = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=50,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        qos_stream = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=100,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.VOLATILE,
+        )
+        self.telemetry_init_pub = self.create_publisher(String, shared_config.TELEMETRY_INIT_TOPIC, qos_init)
+        self.telemetry_pub = self.create_publisher(String, shared_config.TELEMETRY_TOPIC, qos_stream)
+        self.master_ready_pub = self.create_publisher(String, shared_config.MASTER_READY_TOPIC, qos_init)
+
+        shared_config.set_telemetry_emitters(
+            telemetry_fn=self._publish_telemetry,
+            telemetry_init_fn=self._publish_telemetry_init,
+        )
+
+        self.gz_mat_pub = None
+        if HAS_GZ_TRANSPORT and self.use_sim_time_active:
+            try:
+                self.gz_node = GzNode()
+                self.gz_mat_pub = self.gz_node.advertise("/world/qupa_world/material_color", MaterialColor)
+            except Exception:
+                self.gz_mat_pub = None
+
+        self.rob = Utils.QupaRobotInstance(
+            self.robot_id,
+            rx,
+            ry,
+            ryaw,
+            param_figura,
+            param_role,
+            dist_sens=Distribucion_sensores_de_proximidad,
+            d_speed=d_speed,
+            g_speed=g_speed,
+            ticks_per_second=ticks_per_second,
+            interwheel_distance=FOOTBOT_INTERWHEEL_DISTANCE,
+        )
+        self.rob.distance_factor = float(distance_factor)
+
+        self.cmd_vel_pub = self.create_publisher(Twist, f'/{self.robot_id}/cmd_vel', 10)
+        self.led_pub = self.create_publisher(String, f'/{self.robot_id}/leds/color', 10)
+        self.led_srv_client = self.create_client(LEDCommand, f'/{self.robot_id}/set') if HAS_QUPA_LED_SRV else None
+
+        self.create_subscription(Odometry, f'/{self.robot_id}/odom', self._odom_cb, 10)
+        self.create_subscription(LaserScan, f'/{self.robot_id}/scan', self._scan_cb, 10)
+
+        # Estado interactivo Ks8
+        self.cmd_queue = queue.Queue()
+        self.move_done_event = threading.Event()
+        self.cancel_move_event = threading.Event()
+        self.stop_event = threading.Event()
+        self.odom_lock = threading.Lock()
+        self.current_cmd = None  # Tupla (distancia_cm, angulo_deg)
+        self.move_tick_counter = 0
+
+        # Referencia de odometría cruda para que el reset ('n') funcione también con /odom activo
+        self.last_raw_odom = (0.0, 0.0, 0.0)
+        self.odom_ref = (0.0, 0.0, 0.0)
+
+        self.timer_tick = 1
+        self.initialized = False
+        self.step_timer = self.create_timer(1.0 / float(ticks_per_second), self.step)
+
+        self.input_thread = threading.Thread(target=self._input_loop, daemon=True)
+
+    def _publish_telemetry_init(self, text: str):
+        msg = String()
+        msg.data = str(text)
+        self.telemetry_init_pub.publish(msg)
+
+    def _publish_telemetry(self, text: str):
+        msg = String()
+        msg.data = str(text)
+        self.telemetry_pub.publish(msg)
+
+    def _set_led(self, color: str, force_topic_pub: bool = False):
+        Utils.setleds(
+            self.rob,
+            color,
+            led_pub=self.led_pub,
+            gz_mat_pub=self.gz_mat_pub,
+            force_topic_pub=force_topic_pub,
+            led_srv_client=self.led_srv_client,
+        )
+
+    def _emit_position(self):
+        """Envía coordenadas al tracker_trayectory.py."""
+        self.move_tick_counter += 1
+        with self.odom_lock:
+            rx, ry = self.rob.x, self.rob.y
+        shared_config.emit_telemetry(f"Timer={self.move_tick_counter}")
+        shared_config.emit_telemetry(
+            f"[trajectory];{self.robot_id};{rx:.4f};{ry:.4f}"
+        )
+
+    def _reset_odometry(self):
+        """Reinicia la odometría estimada a (0, 0, 0°)."""
+        with self.odom_lock:
+            self.odom_ref = self.last_raw_odom
+            self.rob.x = 0.0
+            self.rob.y = 0.0
+            self.rob.yaw = 0.0
+        self._emit_position()
+        print("\n[Ks8] Odometría reiniciada a x=0.000 m, y=0.000 m, yaw=0.0°", flush=True)
+
+    def _wait_move_with_hotkeys(self):
+        """Espera a que termine el movimiento escuchando 'x' (cancelar) y 'n' (reset odom)."""
+        if not sys.stdin.isatty():
+            while not self.move_done_event.is_set() and not self.stop_event.is_set():
+                self.move_done_event.wait(timeout=0.2)
+            return
+
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
         try:
-            proc.kill()
+            tty.setcbreak(fd)
+            while not self.move_done_event.is_set() and not self.stop_event.is_set():
+                ready, _, _ = select.select([sys.stdin], [], [], 0.1)
+                if ready:
+                    ch = sys.stdin.read(1).lower()
+                    if ch == 'x':
+                        self.cancel_move_event.set()
+                        print("\n[Ks8] Movimiento detenido por usuario ('x').", flush=True)
+                        self.move_done_event.wait(timeout=1.0)
+                        break
+                    elif ch == 'n':
+                        self._reset_odometry()
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+    def _input_loop(self):
+        """Hilo dedicado a leer 'distancia,angulo' desde la terminal."""
+        print("\n===========================================================", flush=True)
+        print(f" [Ks8] {self.robot_id} LISTO. Formato: distancia(cm),angulo(°) (ej: 10,45)", flush=True)
+        print("       Tecla 'x' en movimiento = detener | 'n' = reset odom (0,0)", flush=True)
+        print("       (Ctrl+C para salir)", flush=True)
+        print("===========================================================\n", flush=True)
+
+        while not self.stop_event.is_set():
+            try:
+                raw = input(f"[{self.robot_id}] distancia(cm),angulo(°) [n=reset] > ").strip()
+            except (EOFError, KeyboardInterrupt):
+                break
+
+            if not raw:
+                continue
+
+            if raw.lower() == 'n':
+                self._reset_odometry()
+                continue
+
+            parts = raw.replace(";", ",").split(",")
+            if len(parts) != 2:
+                print("[Ks8] Formato inválido. Usa: distancia,angulo (ej: 10,45) o 'n'", flush=True)
+                continue
+
+            try:
+                distancia = float(parts[0].strip())
+                angulo = float(parts[1].strip())
+            except ValueError:
+                print("[Ks8] Valores numéricos inválidos. Ej: 10,45 o 15,-90", flush=True)
+                continue
+
+            self.move_done_event.clear()
+            self.cancel_move_event.clear()
+            self.cmd_queue.put((distancia, angulo))
+            print(
+                f"[Ks8] Ejecutando: distancia={distancia} cm, angulo={angulo}°... "
+                "(pulsa 'x' para detener, 'n' para reset odom)",
+                flush=True,
+            )
+
+            self._wait_move_with_hotkeys()
+
+            if not self.stop_event.is_set():
+                with self.odom_lock:
+                    rx, ry, ryaw = self.rob.x, self.rob.y, math.degrees(self.rob.yaw)
+                print(
+                    f"[Ks8] Listo. Posición estimada: x={rx:.3f} m, y={ry:.3f} m, yaw={ryaw:.1f}°\n",
+                    flush=True,
+                )
+
+    def init(self):
+        ready_msg = String()
+        ready_msg.data = self.robot_id
+        self.master_ready_pub.publish(ready_msg)
+        print(f"[MASTER_READY] {self.robot_id}", flush=True)
+        self._set_led("black", force_topic_pub=True)
+        self._emit_position()
+        self.input_thread.start()
+
+    def _finish_current_move(self):
+        Move.set_wheels_cm_s(self.rob, 0.0, 0.0, FOOTBOT_INTERWHEEL_DISTANCE)
+        Move.r_move(self.rob)
+        self.rob.cmd_linear_x = 0.0
+        self.rob.cmd_angular_z = 0.0
+        self._set_led("black", force_topic_pub=True)
+        self.current_cmd = None
+        self.cancel_move_event.clear()
+        self.move_done_event.set()
+
+    def step(self):
+        if not self.initialized:
+            self.initialized = True
+            self.init()
+
+        if self.current_cmd is None:
+            try:
+                self.current_cmd = self.cmd_queue.get_nowait()
+                Move.r_move(self.rob)
+                self.rob.c1 = 0
+                # Encender LED una sola vez al comenzar el movimiento (evita saturar el servicio a 8 Hz)
+                self._set_led("blue", force_topic_pub=True)
+            except queue.Empty:
+                pass
+
+        if self.current_cmd is not None:
+            if self.cancel_move_event.is_set():
+                self._finish_current_move()
+            else:
+                distancia, angulo = self.current_cmd
+                # Move.move ya integra (x, y, yaw) en lazo abierto internamente
+                with self.odom_lock:
+                    Move.move(
+                        self.rob,
+                        distancia,
+                        angulo,
+                        float(speed_dem),
+                        float(speed_dem_g),
+                        self.timer_tick,
+                        False,
+                    )
+                self._emit_position()
+
+                if self.rob.c1 == 2:
+                    self._finish_current_move()
+        else:
+            self.rob.cmd_linear_x = 0.0
+            self.rob.cmd_angular_z = 0.0
+
+        twist = Twist()
+        twist.linear.x = float(self.rob.cmd_linear_x)
+        twist.angular.z = float(self.rob.cmd_angular_z)
+        self.cmd_vel_pub.publish(twist)
+
+        self.timer_tick += 1
+
+    def stop_hardware(self):
+        self.stop_event.set()
+        self.cancel_move_event.set()
+        self.move_done_event.set()
+        try:
+            twist = Twist()
+            twist.linear.x = 0.0
+            twist.angular.z = 0.0
+            self.cmd_vel_pub.publish(twist)
+            self._set_led("black", force_topic_pub=True)
         except Exception:
             pass
 
+    def _scan_cb(self, msg: LaserScan):
+        Sensors.process_laser_scan(self.rob, msg)
 
-def stop_process_group(proc, name="launch"):
-    if proc is None or proc.poll() is not None:
-        return
-    print_log(f"[P0] Cerrando grupo de procesos de {name}...")
+    def _odom_cb(self, msg: Odometry):
+        rob = self.rob
+        pos = msg.pose.pose.position
+        ori = msg.pose.pose.orientation
+        siny_cosp = 2.0 * (ori.w * ori.z + ori.x * ori.y)
+        cosy_cosp = 1.0 - 2.0 * (ori.y * ori.y + ori.z * ori.z)
+        raw_yaw = math.atan2(siny_cosp, cosy_cosp)
+
+        with self.odom_lock:
+            self.last_raw_odom = (pos.x, pos.y, raw_yaw)
+            if not rob.odom_received:
+                rob.odom_received = True
+                self.odom_ref = (pos.x, pos.y, raw_yaw)
+
+            dx = pos.x - self.odom_ref[0]
+            dy = pos.y - self.odom_ref[1]
+            cos_r = math.cos(-self.odom_ref[2])
+            sin_r = math.sin(-self.odom_ref[2])
+            rob.x = dx * cos_r - dy * sin_r
+            rob.y = dx * sin_r + dy * cos_r
+            rob.yaw = Utils.norm_rad(raw_yaw - self.odom_ref[2])
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = Ks8MasterControllerNode()
     try:
-        pgid = os.getpgid(proc.pid)
-        os.killpg(pgid, signal.SIGINT)
-        try:
-            proc.wait(timeout=4.0)
-        except subprocess.TimeoutExpired:
-            os.killpg(pgid, signal.SIGTERM)
-            try:
-                proc.wait(timeout=3.0)
-            except subprocess.TimeoutExpired:
-                os.killpg(pgid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    except Exception:
-        terminate_process(proc, name)
-
-
-def wait_with_countdown(seconds: float, stage_label: str):
-    total = max(0.0, float(seconds))
-    if total <= 0.0:
-        return
-    print_log(f"[P0] Esperando {total:.1f}s para estabilizar {stage_label}...")
-    end_t = time.time() + total
-    while time.time() < end_t:
-        time.sleep(min(0.5, end_t - time.time()))
-
-
-def wait_for_ros_topics(required_topics, run_env, timeout_sec=10.0):
-    if not required_topics:
-        return True
-    start_t = time.time()
-    check_code = (
-        "import sys, time, rclpy\n"
-        "from rclpy.node import Node\n"
-        "topics = sys.argv[1:]\n"
-        "rclpy.init()\n"
-        "node = Node('ks7_p0_graph_waiter')\n"
-        "t0 = time.time()\n"
-        "ok = False\n"
-        "while time.time() - t0 < float(topics[0]):\n"
-        "    rclpy.spin_once(node, timeout_sec=0.1)\n"
-        "    existing = dict(node.get_topic_names_and_types())\n"
-        "    if all(t in existing for t in topics[1:]):\n"
-        "        ok = True\n"
-        "        break\n"
-        "    time.sleep(0.2)\n"
-        "node.destroy_node()\n"
-        "rclpy.shutdown()\n"
-        "sys.exit(0 if ok else 1)\n"
-    )
-    try:
-        cmd = [sys.executable, "-c", check_code, str(timeout_sec)] + list(required_topics)
-        res = subprocess.run(
-            cmd,
-            env=run_env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=timeout_sec + 3.0,
-        )
-        if res.returncode == 0:
-            print_log(f"[P0] Tópicos verificados ({', '.join(required_topics)}) en {time.time() - start_t:.1f}s.")
-            return True
-    except Exception:
-        pass
-    print_log(f"[P0] Aviso: No se pudo confirmar {', '.join(required_topics)} antes del timeout; continuando...")
-    return False
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Orquestador secuencial para robot físico Qupa (P0)")
-    parser.add_argument("--id", type=str, default=DEFAULT_ROBOT_ID, help=f"Namespace/ID del robot (default: {DEFAULT_ROBOT_ID})")
-    parser.add_argument("--role", type=str, default=ACTIVE_ROLE_DEFAULT, choices=["master", "apprentice"], help=f"Rol del robot (default: {ACTIVE_ROLE_DEFAULT})")
-    parser.add_argument("--controller", type=str, default=None, help="Ruta opcional al script controlador a cargar")
-    parser.add_argument("--x", type=float, default=DEFAULT_INIT_X, help="Posición inicial X")
-    parser.add_argument("--y", type=float, default=DEFAULT_INIT_Y, help="Posición inicial Y")
-    parser.add_argument("--yaw", type=float, default=DEFAULT_INIT_YAW, help="Orientación inicial (grados)")
-    parser.add_argument("--figura", type=str, default=DEFAULT_FIGURA, help=f"Patrón a dibujar si es master (default: {DEFAULT_FIGURA})")
-    parser.add_argument("--no_hardware", action="store_true", help="Omitir el lanzamiento de hardware.launch.py (si ya está corriendo)")
-    parser.add_argument("--launch_camera", action="store_true", help="Forzar el lanzamiento de camera.launch.py")
-    parser.add_argument("--no_camera", action="store_true", help="No lanzar camera.launch.py")
-    parser.add_argument("--wait_hw", type=float, default=WAIT_AFTER_HARDWARE_SEC, help="Segundos de espera tras lanzar hardware.launch.py")
-    parser.add_argument("--wait_cam", type=float, default=WAIT_AFTER_CAMERA_SEC, help="Segundos de espera tras lanzar camera.launch.py")
-    args = parser.parse_args()
-
-    os.chdir(PROJECT_ROOT_DIR)
-
-    # Resolver qué controlador cargar (permite elegir en la cabecera o por CLI)
-    if args.controller:
-        script_path = args.controller
-    elif args.role == ACTIVE_ROLE_DEFAULT and ACTIVE_CONTROLLER_SCRIPT:
-        script_path = ACTIVE_CONTROLLER_SCRIPT
-    else:
-        script_path = DEFAULT_CONTROLLER_SCRIPTS[args.role]
-
-    should_launch_hw = AUTO_LAUNCH_HARDWARE and (not args.no_hardware)
-    if args.no_camera:
-        should_launch_cam = False
-    elif args.launch_camera:
-        should_launch_cam = True
-    elif AUTO_LAUNCH_CAMERA == "AUTO":
-        should_launch_cam = (args.role.lower() == "apprentice")
-    else:
-        should_launch_cam = bool(AUTO_LAUNCH_CAMERA)
-
-    robot_config = [{
-        "id": args.id,
-        "role": args.role,
-        "x": args.x,
-        "y": args.y,
-        "yaw": args.yaw,
-        "figura": args.figura if args.role == "master" else "",
-    }]
-
-    req_lua_funcs = []
-    req_lua_vars = []
-    for t_conf in TRACKERS:
-        script_key = os.path.basename(t_conf["script"])
-        if script_key in TRACKER_DEPENDENCIES:
-            req_lua_funcs.extend(TRACKER_DEPENDENCIES[script_key].get("funciones_lua", []))
-            req_lua_vars.extend(TRACKER_DEPENDENCIES[script_key].get("variables_lua", []))
-    req_lua_funcs = list(set(req_lua_funcs))
-    req_lua_vars = list(set(req_lua_vars))
-
-    with open(CONFIG_JSON_PATH, "w", encoding="utf-8") as f:
-        json.dump({
-            "robots": robot_config,
-            "vars": {},
-            "active_functions": req_lua_funcs,
-            "active_variables": req_lua_vars,
-        }, f, indent=2, ensure_ascii=False)
-
-    run_env = os.environ.copy()
-    run_env["PYTHONUNBUFFERED"] = "1"
-    run_env.setdefault("RMW_IMPLEMENTATION", "rmw_cyclonedds_cpp")
-    run_env.setdefault("ROS_DOMAIN_ID", "0")
-    run_env.setdefault("ROS_AUTOMATIC_DISCOVERY_RANGE", "SUBNET")
-
-    # Si existe cyclonedds_config.xml en la raíz del proyecto y no se definió CYCLONEDDS_URI, lo aplicamos automáticamente
-    default_cyclone_xml = os.path.join(PROJECT_ROOT_DIR, "cyclonedds_config.xml")
-    if "CYCLONEDDS_URI" not in run_env and os.path.isfile(default_cyclone_xml):
-        run_env["CYCLONEDDS_URI"] = f"file://{default_cyclone_xml}"
-
-    existing_py_path = run_env.get("PYTHONPATH", "")
-    extra_py_paths = f"{PROJECT_ROOT_DIR}:{os.path.join(PROJECT_ROOT_DIR, 'Controller')}:{os.path.join(PROJECT_ROOT_DIR, 'scripts')}"
-    run_env["PYTHONPATH"] = f"{extra_py_paths}:{existing_py_path}" if existing_py_path else extra_py_paths
-
-    print_log("\n===========================================================")
-    print_log(f" INICIANDO ROBOT FÍSICO (P0) - ID: {args.id} | Rol: {args.role}")
-    print_log("===========================================================")
-    print_log(f"[P0] RMW_IMPLEMENTATION: {run_env.get('RMW_IMPLEMENTATION')}")
-    if "CYCLONEDDS_URI" in run_env:
-        print_log(f"[P0] CYCLONEDDS_URI:     {run_env.get('CYCLONEDDS_URI')}")
-    print_log(f"[P0] Controlador final:  {script_path} (Figura: {args.figura or 'N/A'})")
-
-    hw_proc = None
-    cam_proc = None
-    ctrl_proc = None
-
-    try:
-        # =====================================================================
-        # ETAPA 1: Lanzar stack de hardware (IR, Motores, Suelo, LEDs, UV)
-        # =====================================================================
-        if should_launch_hw:
-            hw_cmd = [
-                "ros2", "launch", HARDWARE_LAUNCH_PACKAGE, HARDWARE_LAUNCH_FILE,
-                f"namespace:={args.id}",
-            ]
-            print_log(f"\n[P0] Etapa 1/3: Lanzando drivers de hardware -> {' '.join(hw_cmd)}")
-            hw_proc = subprocess.Popen(
-                hw_cmd,
-                env=run_env,
-                start_new_session=True,
-            )
-            wait_with_countdown(args.wait_hw, f"{HARDWARE_LAUNCH_FILE} ({args.id})")
-            wait_for_ros_topics([f"/{args.id}/scan", f"/{args.id}/cmd_vel"], run_env, timeout_sec=8.0)
-        else:
-            print_log("\n[P0] Etapa 1/3: (Omitida) Se asume que hardware.launch.py ya está activo.")
-
-        # =====================================================================
-        # ETAPA 2: Lanzar cámara omnidireccional (camera.launch.py) si aplica
-        # =====================================================================
-        if should_launch_cam:
-            cam_cmd = [
-                "ros2", "launch", HARDWARE_LAUNCH_PACKAGE, CAMERA_LAUNCH_FILE,
-                f"namespace:={args.id}",
-            ]
-            print_log(f"\n[P0] Etapa 2/3: Lanzando nodo de cámara -> {' '.join(cam_cmd)}")
-            cam_proc = subprocess.Popen(
-                cam_cmd,
-                env=run_env,
-                start_new_session=True,
-            )
-            wait_with_countdown(args.wait_cam, f"{CAMERA_LAUNCH_FILE} ({args.id})")
-            wait_for_ros_topics([f"/{args.id}/camera/detections"], run_env, timeout_sec=8.0)
-        else:
-            print_log(f"\n[P0] Etapa 2/3: (Omitida) Cámara desactivada para rol '{args.role}'.")
-
-        # =====================================================================
-        # ETAPA 3: Lanzar el Controlador Ks7 (Maestro o Aprendiz)
-        # =====================================================================
-        ctrl_cmd = [
-            sys.executable, "-u", script_path,
-            "--ros-args",
-            "-p", "use_sim_time:=false",
-            "-p", f"config_file:={CONFIG_JSON_PATH}",
-            "-p", f"robot_id:={args.id}",
-            "-p", f"role:={args.role}",
-            "-p", f"figura:={args.figura}",
-            "-p", f"init_x:={args.x}",
-            "-p", f"init_y:={args.y}",
-            "-p", f"init_yaw:={args.yaw}",
-        ]
-        print_log(f"\n[P0] Etapa 3/3: Lanzando controlador {script_path}...")
-        print_log(f"[P0] Telemetría habilitada: {', '.join(req_lua_funcs)}")
-        ctrl_proc = subprocess.Popen(ctrl_cmd, env=run_env)
-
-        while ctrl_proc.poll() is None:
-            time.sleep(0.5)
-
+        rclpy.spin(node)
     except KeyboardInterrupt:
-        print_log(f"\n[P0] Interrumpido por el usuario (Ctrl+C). Apagando {args.id} en orden inverso...")
+        pass
     finally:
-        terminate_process(ctrl_proc, f"controlador ({script_path})")
-        stop_process_group(cam_proc, CAMERA_LAUNCH_FILE)
-        stop_process_group(hw_proc, HARDWARE_LAUNCH_FILE)
-        if os.path.exists(CONFIG_JSON_PATH):
-            try:
-                os.remove(CONFIG_JSON_PATH)
-            except Exception:
-                pass
-        print_log(f"[P0] Apagado completo de {args.id}.")
+        node.stop_hardware()
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':
