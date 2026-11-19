@@ -6,7 +6,8 @@
 #   - Pide por terminal pares "distancia,angulo" (ej: 10,45 -> gira 45° y avanza 10 cm).
 #   - Tecla 'x' durante el movimiento: detiene el movimiento actual y pide un nuevo valor.
 #   - Tecla 'n' (en prompt o en movimiento): reinicia la odometría estimada a (0, 0).
-#   - Enciende LED azul mientras se mueve, apaga al terminar y envía coordenadas al tracker.
+#   - Enciende LED azul una sola vez al iniciar movimiento y apaga al terminar.
+#   - Puede ejecutarse directamente desde ~/sim_ws_qupa/Ks7 o mediante run_sim_ros2_p0.py.
 
 import json
 import math
@@ -22,8 +23,8 @@ import tty
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_ROOT = os.path.dirname(_THIS_DIR) if os.path.basename(_THIS_DIR) == "Controller" else _THIS_DIR
-for _p in (_THIS_DIR, _PROJECT_ROOT):
-    if _p not in sys.path:
+for _p in (_PROJECT_ROOT, _THIS_DIR, os.getcwd()):
+    if _p and _p not in sys.path:
         sys.path.insert(0, _p)
 
 sys.modules["Controller.Ks8_master_controller"] = sys.modules[__name__]
@@ -186,6 +187,10 @@ class Ks8MasterControllerNode(Node):
         self.current_cmd = None  # Tupla (distancia_cm, angulo_deg)
         self.move_tick_counter = 0
 
+        # Referencia de odometría cruda para que el reset ('n') funcione también con /odom activo
+        self.last_raw_odom = (0.0, 0.0, 0.0)
+        self.odom_ref = (0.0, 0.0, 0.0)
+
         self.timer_tick = 1
         self.initialized = False
         self.step_timer = self.create_timer(1.0 / float(ticks_per_second), self.step)
@@ -225,11 +230,12 @@ class Ks8MasterControllerNode(Node):
     def _reset_odometry(self):
         """Reinicia la odometría estimada a (0, 0, 0°)."""
         with self.odom_lock:
+            self.odom_ref = self.last_raw_odom
             self.rob.x = 0.0
             self.rob.y = 0.0
             self.rob.yaw = 0.0
         self._emit_position()
-        print("\n[Ks8] Odometría reiniciada a x=0.000 m, y=0.000 m, yaw=0.0°", flush=True)
+        print("\\n[Ks8] Odometría reiniciada a x=0.000 m, y=0.000 m, yaw=0.0°", flush=True)
 
     def _wait_move_with_hotkeys(self):
         """Espera a que termine el movimiento escuchando 'x' (cancelar) y 'n' (reset odom)."""
@@ -248,7 +254,7 @@ class Ks8MasterControllerNode(Node):
                     ch = sys.stdin.read(1).lower()
                     if ch == 'x':
                         self.cancel_move_event.set()
-                        print("\n[Ks8] Movimiento detenido por usuario ('x').", flush=True)
+                        print("\\n[Ks8] Movimiento detenido por usuario ('x').", flush=True)
                         self.move_done_event.wait(timeout=1.0)
                         break
                     elif ch == 'n':
@@ -258,11 +264,11 @@ class Ks8MasterControllerNode(Node):
 
     def _input_loop(self):
         """Hilo dedicado a leer 'distancia,angulo' desde la terminal."""
-        print("\n===========================================================", flush=True)
+        print("\\n===========================================================", flush=True)
         print(f" [Ks8] {self.robot_id} LISTO. Formato: distancia(cm),angulo(°) (ej: 10,45)", flush=True)
         print("       Tecla 'x' en movimiento = detener | 'n' = reset odom (0,0)", flush=True)
         print("       (Ctrl+C para salir)", flush=True)
-        print("===========================================================\n", flush=True)
+        print("===========================================================\\n", flush=True)
 
         while not self.stop_event.is_set():
             try:
@@ -304,7 +310,7 @@ class Ks8MasterControllerNode(Node):
                 with self.odom_lock:
                     rx, ry, ryaw = self.rob.x, self.rob.y, math.degrees(self.rob.yaw)
                 print(
-                    f"[Ks8] Listo. Posición estimada: x={rx:.3f} m, y={ry:.3f} m, yaw={ryaw:.1f}°\n",
+                    f"[Ks8] Listo. Posición estimada: x={rx:.3f} m, y={ry:.3f} m, yaw={ryaw:.1f}°\\n",
                     flush=True,
                 )
 
@@ -337,6 +343,8 @@ class Ks8MasterControllerNode(Node):
                 self.current_cmd = self.cmd_queue.get_nowait()
                 Move.r_move(self.rob)
                 self.rob.c1 = 0
+                # Encender LED una sola vez al comenzar el movimiento (evita saturar el servicio a 8 Hz)
+                self._set_led("blue", force_topic_pub=True)
             except queue.Empty:
                 pass
 
@@ -356,7 +364,6 @@ class Ks8MasterControllerNode(Node):
                         self.timer_tick,
                         False,
                     )
-                self._set_led("blue", force_topic_pub=True)
                 self._emit_position()
 
                 if self.rob.c1 == 2:
@@ -396,15 +403,19 @@ class Ks8MasterControllerNode(Node):
         cosy_cosp = 1.0 - 2.0 * (ori.y * ori.y + ori.z * ori.z)
         raw_yaw = math.atan2(siny_cosp, cosy_cosp)
 
-        if not rob.odom_received:
-            rob.odom_received = True
-            rob.odom_origin_pos = (0.0, 0.0)
-            rob.odom_origin_yaw = 0.0
-
         with self.odom_lock:
-            rob.x = pos.x
-            rob.y = pos.y
-            rob.yaw = Utils.norm_rad(raw_yaw)
+            self.last_raw_odom = (pos.x, pos.y, raw_yaw)
+            if not rob.odom_received:
+                rob.odom_received = True
+                self.odom_ref = (pos.x, pos.y, raw_yaw)
+
+            dx = pos.x - self.odom_ref[0]
+            dy = pos.y - self.odom_ref[1]
+            cos_r = math.cos(-self.odom_ref[2])
+            sin_r = math.sin(-self.odom_ref[2])
+            rob.x = dx * cos_r - dy * sin_r
+            rob.y = dx * sin_r + dy * cos_r
+            rob.yaw = Utils.norm_rad(raw_yaw - self.odom_ref[2])
 
 
 def main(args=None):
