@@ -3,7 +3,7 @@
 # Ubicación: ~/sim_ws_qupa/Ks7/Controller/Ks8_master_controller.py
 # Descripción:
 #   Controlador interactivo de depuración (Ks8) para el robot físico Qupa.
-#   - Pide por terminal pares "angulo,distancia" (ej: 45,20).
+#   - Pide por terminal pares "distancia,angulo" (ej: 10,45 -> gira 45° y avanza 10 cm).
 #   - Tecla 'x' durante el movimiento: detiene el movimiento actual y pide un nuevo valor.
 #   - Tecla 'n' (en prompt o en movimiento): reinicia la odometría estimada a (0, 0).
 #   - Enciende LED azul mientras se mueve, apaga al terminar y envía coordenadas al tracker.
@@ -183,7 +183,7 @@ class Ks8MasterControllerNode(Node):
         self.cancel_move_event = threading.Event()
         self.stop_event = threading.Event()
         self.odom_lock = threading.Lock()
-        self.current_cmd = None
+        self.current_cmd = None  # Tupla (distancia_cm, angulo_deg)
         self.move_tick_counter = 0
 
         self.timer_tick = 1
@@ -257,16 +257,16 @@ class Ks8MasterControllerNode(Node):
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
     def _input_loop(self):
-        """Hilo dedicado a leer 'angulo,distancia' desde la terminal."""
+        """Hilo dedicado a leer 'distancia,angulo' desde la terminal."""
         print("\n===========================================================", flush=True)
-        print(f" [Ks8] {self.robot_id} LISTO. Formato: angulo,distancia (ej: 45,20)", flush=True)
+        print(f" [Ks8] {self.robot_id} LISTO. Formato: distancia(cm),angulo(°) (ej: 10,45)", flush=True)
         print("       Tecla 'x' en movimiento = detener | 'n' = reset odom (0,0)", flush=True)
         print("       (Ctrl+C para salir)", flush=True)
         print("===========================================================\n", flush=True)
 
         while not self.stop_event.is_set():
             try:
-                raw = input(f"[{self.robot_id}] angulo(°),distancia(cm) [n=reset] > ").strip()
+                raw = input(f"[{self.robot_id}] distancia(cm),angulo(°) [n=reset] > ").strip()
             except (EOFError, KeyboardInterrupt):
                 break
 
@@ -279,21 +279,21 @@ class Ks8MasterControllerNode(Node):
 
             parts = raw.replace(";", ",").split(",")
             if len(parts) != 2:
-                print("[Ks8] Formato inválido. Usa: angulo,distancia (ej: 45,20) o 'n'", flush=True)
+                print("[Ks8] Formato inválido. Usa: distancia,angulo (ej: 10,45) o 'n'", flush=True)
                 continue
 
             try:
-                angulo = float(parts[0].strip())
-                distancia = float(parts[1].strip())
+                distancia = float(parts[0].strip())
+                angulo = float(parts[1].strip())
             except ValueError:
-                print("[Ks8] Valores numéricos inválidos. Ej: 45,20 o -90,15", flush=True)
+                print("[Ks8] Valores numéricos inválidos. Ej: 10,45 o 15,-90", flush=True)
                 continue
 
             self.move_done_event.clear()
             self.cancel_move_event.clear()
-            self.cmd_queue.put((angulo, distancia))
+            self.cmd_queue.put((distancia, angulo))
             print(
-                f"[Ks8] Ejecutando: ({angulo}, {distancia})... "
+                f"[Ks8] Ejecutando: distancia={distancia} cm, angulo={angulo}°... "
                 "(pulsa 'x' para detener, 'n' para reset odom)",
                 flush=True,
             )
@@ -344,28 +344,19 @@ class Ks8MasterControllerNode(Node):
             if self.cancel_move_event.is_set():
                 self._finish_current_move()
             else:
-                angulo, distancia = self.current_cmd
-                Move.move(
-                    self.rob,
-                    angulo,
-                    distancia,
-                    float(speed_dem),
-                    float(speed_dem_g),
-                    self.timer_tick,
-                    False,
-                )
+                distancia, angulo = self.current_cmd
+                # Move.move ya integra (x, y, yaw) en lazo abierto internamente
+                with self.odom_lock:
+                    Move.move(
+                        self.rob,
+                        distancia,
+                        angulo,
+                        float(speed_dem),
+                        float(speed_dem_g),
+                        self.timer_tick,
+                        False,
+                    )
                 self._set_led("blue", force_topic_pub=True)
-
-                # Dead-reckoning cuando no hay /odom físico
-                if not self.rob.odom_received:
-                    dt = 1.0 / float(ticks_per_second)
-                    v = float(self.rob.cmd_linear_x)
-                    w = float(self.rob.cmd_angular_z)
-                    with self.odom_lock:
-                        self.rob.yaw = Utils.norm_rad(self.rob.yaw + w * dt)
-                        self.rob.x += v * math.cos(self.rob.yaw) * dt
-                        self.rob.y += v * math.sin(self.rob.yaw) * dt
-
                 self._emit_position()
 
                 if self.rob.c1 == 2:
