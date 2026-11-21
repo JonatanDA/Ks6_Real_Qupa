@@ -1,10 +1,10 @@
-# Archivo: Ks7/apprentice_entries.py
-# Ubicación: ~/sim_ws_qupa/Ks7/Controller/apprentice_entries.py
+# Archivo: Ks6/apprentice_entries.py
+# Ubicación: ~/sim_ws_qupa/Ks6/Controller/apprentice_entries.py
 # Descripción:
 #   Submódulo de entradas físicas, cámara omnidireccional (/Qupa4/camera/detections),
 #   odometría, supervivencia (SP) y control de movimiento por Active Learning del aprendiz
 #   en ROS 2 + Gazebo Harmonic / Robot Real.
-#   Equivalente 1:1 de Ks7/Controller/apprentice_entries.lua.
+#   Equivalente 1:1 de Ks6/Controller/apprentice_entries.lua.
 
 import importlib
 import math

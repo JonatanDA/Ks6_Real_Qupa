@@ -1,12 +1,12 @@
-# Archivo: Ks7/Functions/move.py
-# Ubicación: ~/sim_ws_qupa/Ks7/Functions/move.py
+# Archivo: Ks6/Functions/move.py
+# Ubicación: ~/sim_ws_qupa/Ks6/Functions/move.py
 # Descripción:
 #   Módulo compartido de movimiento y navegación para los Qupa en ROS 2 (Simulación y Hardware Real):
 #   move, r_move, redondear_resolucion, RandomWalking, navegar_a_coordenadas y Save_position.
 #   Ejecuta el control de movimiento en lazo abierto por velocidad enviada y tiempo transcurrido,
 #   e integra cinemáticamente (x, y, yaw) cuando el robot opera sin tópico /odom (Qupa real).
 #   Respeta fielmente las velocidades speed_d, speed_g, d_speed y g_speed definidas en el controlador.
-#   Equivalente 1:1 de Ks7/Functions/move.lua.
+#   Equivalente 1:1 de Ks6/Functions/move.lua.
 
 import math
 import random
@@ -15,6 +15,32 @@ from Functions import shared_config
 from Functions import sensors as sensors_mod
 from Functions import utils as utils_mod
 
+
+
+# ============================================================================
+# LÍMITES FÍSICOS DE SATURACIÓN DEL ROBOT QUPA (GAZEBO Y REAL)
+# ============================================================================
+MAX_LINEAR_SPEED_CM_S   = 8.0                   # 8.0 cm/s = 0.08 m/s
+MAX_LINEAR_SPEED_M_S    = 0.08                  # m/s
+MAX_ANGULAR_SPEED_RAD_S = 0.776                 # rad/s
+MAX_ANGULAR_SPEED_DEG_S = math.degrees(0.776)   # ~44.4615 °/s
+
+
+def _get_max_linear_cm_s() -> float:
+    return float(shared_config.get_controller_var("MAX_LINEAR_SPEED_CM_S", MAX_LINEAR_SPEED_CM_S))
+
+
+def _get_max_angular_rad_s() -> float:
+    return float(shared_config.get_controller_var("MAX_ANGULAR_SPEED_RAD_S", MAX_ANGULAR_SPEED_RAD_S))
+
+
+def clamp_cmd_vel(lin_m_s: float, ang_rad_s: float):
+    """Satura (linear.x [m/s], angular.z [rad/s]) a los límites reales del Qupa."""
+    max_lin_m_s = _get_max_linear_cm_s() / 100.0
+    max_ang_rad_s = _get_max_angular_rad_s()
+    lin_clamped = max(-max_lin_m_s, min(max_lin_m_s, float(lin_m_s)))
+    ang_clamped = max(-max_ang_rad_s, min(max_ang_rad_s, float(ang_rad_s)))
+    return lin_clamped, ang_clamped
 
 def _norm_rad(a: float) -> float:
     return math.atan2(math.sin(a), math.cos(a))
@@ -26,8 +52,7 @@ def _integrate_open_loop_pose(rob, dt: float):
     (cmd_linear_x, cmd_angular_z) y el paso de tiempo dt cuando no existe tópico /odom
     (robots físicos Qupa sin encoders).
     """
-    if getattr(rob, 'odom_received', False):
-        return
+    # En Ks6 Real Qupa no existe odometría global (/odom): siempre integra en lazo abierto por tiempo.
     if dt <= 0.0:
         return
     v = float(getattr(rob, 'cmd_linear_x', 0.0))
@@ -116,6 +141,8 @@ def set_wheels_cm_s(rob, left_cm_s: float, right_cm_s: float, interwheel_distanc
         rob.cmd_linear_x = v_avg_cm_s / 100.0
         rob.cmd_angular_z = (right_cm_s - left_cm_s) / L
 
+    rob.cmd_linear_x, rob.cmd_angular_z = clamp_cmd_vel(rob.cmd_linear_x, rob.cmd_angular_z)
+
     tps = float(getattr(rob, 'ticks_per_second', shared_config.get_controller_var("ticks_per_second", 4.0)))
     dt = 1.0 / tps if tps > 0.0 else 0.25
     _integrate_open_loop_pose(rob, dt)
@@ -140,6 +167,8 @@ def move(
     global ticks_needed, actual_dis_ticks, angle_ticks_needed, actual_ang_ticks
     global time_needed, wheel_speed, omega_rad
 
+    rob.cmd_linear_x, rob.cmd_angular_z = clamp_cmd_vel(rob.cmd_linear_x, rob.cmd_angular_z)
+
     tps = float(getattr(rob, 'ticks_per_second', shared_config.get_controller_var("ticks_per_second", 4.0)))
     dt = 1.0 / tps if tps > 0.0 else 0.25
 
@@ -162,8 +191,12 @@ def move(
     target_ang_deg = abs(float(target_angle))
     target_dist_cm = abs(float(distance))
 
-    abs_speed_g_deg_s = abs(float(speed_g))
-    abs_speed_d_cm_s = abs(float(speed_d))
+    # Saturación física estricta del Qupa (8.0 cm/s lineal y 0.776 rad/s ≈ 44.46 °/s angular)
+    # Se satura ANTES de calcular t_ang y t_dis para que el lazo abierto por tiempo sea exacto.
+    max_lin_cm_s = _get_max_linear_cm_s()
+    max_ang_deg_s = math.degrees(_get_max_angular_rad_s())
+    abs_speed_g_deg_s = min(abs(float(speed_g)), max_ang_deg_s)
+    abs_speed_d_cm_s = min(abs(float(speed_d)), max_lin_cm_s)
 
     max_lin_m_s = abs_speed_d_cm_s / 100.0
     max_ang_rad_s = math.radians(abs_speed_g_deg_s)

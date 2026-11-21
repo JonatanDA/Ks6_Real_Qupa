@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-# Archivo: Ks7/Ks7_apprentice_controller.py
-# Ubicación: ~/sim_ws_qupa/Ks7/Controller/Ks7_apprentice_controller.py
+# Archivo: Ks6/Ks6_apprentice_controller.py
+# Ubicación: ~/sim_ws_qupa/Ks6/Controller/Ks6_apprentice_controller.py
 # Descripción:
 #   Controlador principal y autónomo del Aprendiz / Observador (Qupa4) en ROS 2 Jazzy + Gazebo Harmonic.
 #   Es la fuente única de verdad de las variables del aprendiz; propaga sus valores a
 #   apprentice_process, apprentice_entries, shared_config, Move y Active Learning sin ser sobrescrito.
-#   Equivalente 1:1 de Ks7/Controller/Ks7_apprentice_controller.lua.
+#   Equivalente 1:1 de Ks6/Controller/Ks6_apprentice_controller.lua.
 
 import importlib
 import json
@@ -15,15 +15,15 @@ import random
 import sys
 import time
 
-# Configurar ruta local para encontrar módulos tanto en Ks7/Controller/ como en Ks7/Functions/
+# Configurar ruta local para encontrar módulos tanto en Ks6/Controller/ como en Ks6/Functions/
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_ROOT = os.path.dirname(_THIS_DIR) if os.path.basename(_THIS_DIR) == "Controller" else _THIS_DIR
 for _p in (_THIS_DIR, _PROJECT_ROOT):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-sys.modules["Controller.Ks7_apprentice_controller"] = sys.modules[__name__]
-sys.modules["Ks7_apprentice_controller"] = sys.modules[__name__]
+sys.modules["Controller.Ks6_apprentice_controller"] = sys.modules[__name__]
+sys.modules["Ks6_apprentice_controller"] = sys.modules[__name__]
 
 
 def _require_any(candidates):
@@ -44,16 +44,20 @@ ticks_per_second                    = 4
 max_time                            = 5000 * ticks_per_second
 Distribucion_sensores_de_proximidad = [0, -45, 45, -90, 90, 180]
 Num_cantidad_leds                   = 2
-FOOTBOT_INTERWHEEL_DISTANCE         = 14
+FOOTBOT_INTERWHEEL_DISTANCE         = 8.6
 
 factor_vel                          = 1
-speed_dem                           = 5 * factor_vel
-speed_dem_g                         = (speed_dem / 2)
+speed_dem                           = 6.0 * factor_vel
+speed_dem_g                         = 40.0
 
-d_speed                             = 8
-g_speed                             = 20
+d_speed                             = 8.0
+g_speed                             = 44.46
 
 # Métricas del modelo de observación y paciencia
+# Límites físicos de saturación del robot Qupa (Gazebo y Hardware Real)
+MAX_LINEAR_SPEED_CM_S               = 8.0     # Velocidad lineal máxima: 8.0 cm/s (0.08 m/s)
+MAX_ANGULAR_SPEED_RAD_S             = 0.776   # Velocidad angular máxima: 0.776 rad/s (~44.46 °/s)
+
 distance_treshold                   = 20
 MAX_PATIENCE                        = 200 * ticks_per_second
 BASE_RESTORE                        = 30  * ticks_per_second
@@ -144,7 +148,7 @@ def setleds(color: str):
 # ============================================================================
 #                                MAIN FUNCTIONS
 # ============================================================================
-# Funciones para los trackers (equivalentes 1:1 de Ks7_apprentice_controller.lua)
+# Funciones para los trackers (equivalentes 1:1 de Ks6_apprentice_controller.lua)
 
 def Print_tracker_python(obs_ang_offset_global, x_mark, y_mark, yellow_blobs, green_blobs):
     if _active_node is not None and not _active_node.tracker_printer.enable_print_python:
@@ -408,7 +412,7 @@ def apprentice(
     set_led_fn=None,
     tracker_printer=None,
 ):
-    """Equivalente 1:1 de apprentice() en Ks7_apprentice_controller.lua."""
+    """Equivalente 1:1 de apprentice() en Ks6_apprentice_controller.lua."""
     global d1, master_indice, indice, PI_end, PI_counter_seg
     rob = app if app is not None else _active_app
 
@@ -502,16 +506,23 @@ def apprentice(
 timer = 1
 
 
-class Ks7ApprenticeControllerNode(Node):
+class Ks6ApprenticeControllerNode(Node):
     def __init__(self):
         global _active_node, _active_app
+        cli_use_sim_time = False
+        for idx, arg in enumerate(sys.argv):
+            if arg.startswith('use_sim_time:='):
+                cli_use_sim_time = arg.split(':=', 1)[1].strip().lower() in ('true', '1', 'yes')
+            elif arg in ('-p', '--param') and idx + 1 < len(sys.argv) and sys.argv[idx + 1].startswith('use_sim_time:='):
+                cli_use_sim_time = sys.argv[idx + 1].split(':=', 1)[1].strip().lower() in ('true', '1', 'yes')
         super().__init__(
-            'ks7_apprentice_controller_node',
-            parameter_overrides=[Parameter('use_sim_time', Parameter.Type.BOOL, True)],
+            'ks6_apprentice_controller_node',
+            parameter_overrides=[Parameter('use_sim_time', Parameter.Type.BOOL, cli_use_sim_time)],
         )
+        self.use_sim_time_active = cli_use_sim_time
         _active_node = self
 
-        self.declare_parameter('config_file', '/tmp/ks7_robots_config.json')
+        self.declare_parameter('config_file', '/tmp/ks6_robots_config.json')
         self.declare_parameter('robot_id', 'Qupa4')
         self.declare_parameter('role', 'apprentice')
         self.declare_parameter('init_x', -1.20)
@@ -551,7 +562,7 @@ class Ks7ApprenticeControllerNode(Node):
             except Exception:
                 apprentice_entry = None
 
-        # Primero empujamos las variables definidas en Ks7_apprentice_controller hacia los submódulos
+        # Primero empujamos las variables definidas en Ks6_apprentice_controller hacia los submódulos
         # y luego aplicamos únicamente las claves de `--vars` (injected_vars) si las hubiera.
         _push_globals_to_process()
         apprentice_process.apply_injected_vars(injected_vars)
@@ -621,6 +632,8 @@ class Ks7ApprenticeControllerNode(Node):
         _active_app = self.rob
         self.robots = {self.robot_id: self.rob}
 
+        # --- CONFIGURACIÓN DE PUBLICADORES Y SUSCRIPCIONES DEL NODO APRENDIZ ---
+        # Publicador de velocidad diferencial (Twist saturado a 0.08 m/s y 0.776 rad/s)
         self.cmd_vel_pub = self.create_publisher(Twist, f'/{self.robot_id}/cmd_vel', 10)
         self.led_pub = self.create_publisher(String, f'/{self.robot_id}/leds/color', 10)
 
@@ -630,12 +643,14 @@ class Ks7ApprenticeControllerNode(Node):
             self._odom_cb,
             10,
         )
+        # 1) Suscripción estricta a proximidad por LaserScan (/{robot_id}/scan, sin ray-tracing)
         self.create_subscription(
             LaserScan,
             f'/{self.robot_id}/scan',
             self._scan_cb,
             10,
         )
+        # 2) Suscripción estricta a cámara omnidireccional del aprendiz (/{robot_id}/camera/detections)
         self.create_subscription(
             DetectionArray,
             f'/{self.robot_id}/camera/detections',
@@ -727,7 +742,7 @@ class Ks7ApprenticeControllerNode(Node):
     def step(self):
         global timer, _active_app
         if not self.initialized:
-            if not self.rob.odom_received and (time.time() - self.start_wall_time) < 8.0:
+            if self.use_sim_time_active and not self.rob.odom_received and (time.time() - self.start_wall_time) < 8.0:
                 return
             self.initialized = True
             self.init()
@@ -754,8 +769,10 @@ class Ks7ApprenticeControllerNode(Node):
         )
 
         twist = Twist()
-        twist.linear.x = float(self.rob.cmd_linear_x)
-        twist.angular.z = float(self.rob.cmd_angular_z)
+        # Saturación estricta antes de publicar en /{robot_id}/cmd_vel (8 cm/s y 0.776 rad/s)
+        lin_cmd, ang_cmd = Move.clamp_cmd_vel(self.rob.cmd_linear_x, self.rob.cmd_angular_z)
+        twist.linear.x = float(lin_cmd)
+        twist.angular.z = float(ang_cmd)
         self.cmd_vel_pub.publish(twist)
 
         if self.timer_tick >= max_time:
@@ -800,11 +817,11 @@ class Ks7ApprenticeControllerNode(Node):
         rob.yaw = Utils.norm_rad(raw_yaw + rob.odom_origin_yaw)
 
 
-Ks6ApprenticeControllerNode = Ks7ApprenticeControllerNode
+Ks6ApprenticeControllerNode = Ks6ApprenticeControllerNode
 
 
 def _push_globals_to_process():
-    """Propaga las variables globales definidas en Ks7_apprentice_controller hacia los submódulos."""
+    """Propaga las variables globales definidas en Ks6_apprentice_controller hacia los submódulos."""
     shared_config.sync_from_controller(sys.modules[__name__])
     apprentice_process.TIEMPO_RW_TICKS = int(60 * ticks_per_second)
     apprentice_process.current_patience = int(MAX_PATIENCE)
@@ -864,7 +881,7 @@ def destroy():
 
 def main(args=None):
     rclpy.init(args=args)
-    node = Ks7ApprenticeControllerNode()
+    node = Ks6ApprenticeControllerNode()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

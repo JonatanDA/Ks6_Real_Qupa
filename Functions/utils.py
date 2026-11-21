@@ -1,11 +1,11 @@
-# Archivo: Ks7/Functions/utils.py
-# Ubicación: ~/sim_ws_qupa/Ks7/Functions/utils.py
+# Archivo: Ks6/Functions/utils.py
+# Ubicación: ~/sim_ws_qupa/Ks6/Functions/utils.py
 # Descripción:
 #   Módulo compartido de utilidades para los Qupa en ROS 2 (Simulación y Hardware Real):
 #   temporizadores (Temporizador_1, Temporizador_2), control de LEDs (setleds con soporte
 #   para servicio físico APA102 /<robot_id>/set y Gazebo), determinación de rol,
 #   diccionario de figuras geométricas (original_params) y funciones auxiliares de impresión.
-#   Equivalente 1:1 de Ks7/Functions/utils.lua.
+#   Equivalente 1:1 de Ks6/Functions/utils.lua.
 
 import json
 import math

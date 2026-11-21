@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <!--
   Archivo: cyclonedds_config.xml
-  Ubicación sugerida: ~/sim_ws_qupa/Ks7/cyclonedds_config.xml (o ~/qupa_ws/src/qupa/cyclonedds_config.xml)
+  Ubicación sugerida: ~/sim_ws_qupa/Ks6/cyclonedds_config.xml (o ~/qupa_ws/src/qupa/cyclonedds_config.xml)
   Descripción:
     Configuración explícita de CycloneDDS (Unicast + Multicast) entre tu PC y el robot físico qupa_D2.
     - IP de la PC:       192.168.0.105

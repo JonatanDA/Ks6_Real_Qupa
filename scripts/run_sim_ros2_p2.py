@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Archivo: scripts/run_sim_ros2_p2.py
-# Ubicación: ~/sim_ws_qupa/Ks7/scripts/run_sim_ros2_p2.py
+# Ubicación: ~/sim_ws_qupa/Ks6/scripts/run_sim_ros2_p2.py
 # Descripción: Lanza únicamente el Gestor de Trackers que lee la telemetría de ROS 2.
 # Uso: Ejecutar en Terminal 2.
 
@@ -12,7 +12,7 @@ import time
 
 _THIS_FILE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT_DIR = os.path.dirname(_THIS_FILE_DIR) if os.path.basename(_THIS_FILE_DIR) == "scripts" else _THIS_FILE_DIR
-CONFIG_JSON_PATH = f"/tmp/ks7_trackers_config_p2_{os.getpid()}.json"
+CONFIG_JSON_PATH = f"/tmp/ks6_trackers_config_p2_{os.getpid()}.json"
 
 # =============================================================================
 # ---------- CONFIGURACIÓN DE TRACKERS ----------
@@ -65,7 +65,7 @@ def main():
         print_log(f"[P2] Ejecutando {len(TRACKERS)} trackers.")
         if NIVEL_LOG_P2 == 1:
             print_log("[P2] Modo Silencioso: Ocultando flujo de datos crudos (Eco ROS 2).")
-        print_log("[P2] Escuchando red ROS 2 (/ks7/telemetry)...\n")
+        print_log("[P2] Escuchando red ROS 2 (/ks6/telemetry)...\n")
         
         tm_proc = subprocess.Popen(tm_cmd, env=run_env)
         

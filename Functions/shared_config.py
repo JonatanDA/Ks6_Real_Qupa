@@ -1,9 +1,10 @@
-# Archivo: Ks7/Functions/shared_config.py
-# Ubicación: ~/sim_ws_qupa/Ks7/Functions/shared_config.py
+# Variante: Ks6 Real Qupa (sin Gazebo, sin /odom global, move lazo abierto por tiempo)
+# Archivo: Ks6/Functions/shared_config.py
+# Ubicación: ~/sim_ws_qupa/Ks6/Functions/shared_config.py
 # Descripción:
-#   Módulo de configuración y enlace de variables para Ks7.
-#   Toma los valores definidos en el controlador principal activo (Ks7_master_controller
-#   o Ks7_apprentice_controller) y solo usa valores de respaldo ("or default" estilo Lua)
+#   Módulo de configuración y enlace de variables para Ks6.
+#   Toma los valores definidos en el controlador principal activo (Ks6_master_controller
+#   o Ks6_apprentice_controller) y solo usa valores de respaldo ("or default" estilo Lua)
 #   cuando una variable no fue definida en el controlador principal.
 
 import sys
@@ -12,10 +13,10 @@ sys.modules["Functions.shared_config"] = sys.modules[__name__]
 sys.modules["shared_config"] = sys.modules[__name__]
 
 _CONTROLLER_MODULE_NAMES = (
-    "Ks7_apprentice_controller",
-    "Controller.Ks7_apprentice_controller",
-    "Ks7_master_controller",
-    "Controller.Ks7_master_controller",
+    "Ks6_apprentice_controller",
+    "Controller.Ks6_apprentice_controller",
+    "Ks6_master_controller",
+    "Controller.Ks6_master_controller",
 )
 
 
@@ -48,25 +49,29 @@ ticks_per_second                    = get_controller_var("ticks_per_second", 4)
 max_time                            = get_controller_var("max_time", 5000 * ticks_per_second)
 Distribucion_sensores_de_proximidad = get_controller_var("Distribucion_sensores_de_proximidad", [0, -45, 45, -90, 90, 180])
 Num_cantidad_leds                   = get_controller_var("Num_cantidad_leds", 2)
-FOOTBOT_INTERWHEEL_DISTANCE         = get_controller_var("FOOTBOT_INTERWHEEL_DISTANCE", 14)
+FOOTBOT_INTERWHEEL_DISTANCE         = get_controller_var("FOOTBOT_INTERWHEEL_DISTANCE", 8.6)
 
 factor_vel                          = get_controller_var("factor_vel", 1)
-speed_dem                           = get_controller_var("speed_dem", 10 * factor_vel)
-speed_dem_g                         = get_controller_var("speed_dem_g", (speed_dem / 2))
+speed_dem                           = get_controller_var("speed_dem", 6.0 * factor_vel)
+speed_dem_g                         = get_controller_var("speed_dem_g", 40.0)
 
-d_speed                             = get_controller_var("d_speed", 30)
-g_speed                             = get_controller_var("g_speed", 80)
+d_speed                             = get_controller_var("d_speed", 8.0)
+g_speed                             = get_controller_var("g_speed", 44.46)
 
+
+# Límites físicos de saturación del robot Qupa (Gazebo y Hardware Real)
+MAX_LINEAR_SPEED_CM_S               = get_controller_var("MAX_LINEAR_SPEED_CM_S", 8.0)       # 0.08 m/s
+MAX_ANGULAR_SPEED_RAD_S             = get_controller_var("MAX_ANGULAR_SPEED_RAD_S", 0.776)   # ~44.46 deg/s
 distance_factor                     = get_controller_var("distance_factor", 1)
 SMART_MASTERS                       = get_controller_var("SMART_MASTERS", True)
 
 # ============================================================================
-# 2. TÓPICOS ROS 2 DE TELEMETRÍA Y SINCRONIZACIÓN (Ks7)
+# 2. TÓPICOS ROS 2 DE TELEMETRÍA Y SINCRONIZACIÓN (Ks6)
 # ============================================================================
-TELEMETRY_INIT_TOPIC = "/ks7/telemetry_init"
-TELEMETRY_TOPIC      = "/ks7/telemetry"
-TRACKER_READY_TOPIC  = "/ks7/tracker_ready"
-MASTER_READY_TOPIC   = "/ks7/master_ready"
+TELEMETRY_INIT_TOPIC = "/ks6/telemetry_init"
+TELEMETRY_TOPIC      = "/ks6/telemetry"
+TRACKER_READY_TOPIC  = "/ks6/tracker_ready"
+MASTER_READY_TOPIC   = "/ks6/master_ready"
 
 _telemetry_emit_fn      = None
 _telemetry_init_emit_fn = None
@@ -82,6 +87,8 @@ _SHARED_VAR_NAMES = (
     "speed_dem_g",
     "d_speed",
     "g_speed",
+    "MAX_LINEAR_SPEED_CM_S",
+    "MAX_ANGULAR_SPEED_RAD_S",
     "distance_factor",
     "SMART_MASTERS",
     "distance_treshold",
@@ -110,8 +117,8 @@ def set_telemetry_emitters(telemetry_fn=None, telemetry_init_fn=None):
 
 def emit_telemetry(line: str, is_init: bool = False):
     """
-    Envía una línea de telemetría al tópico ROS 2 correspondiente (/ks7/telemetry_init
-    o /ks7/telemetry) y la imprime en stdout para registro local.
+    Envía una línea de telemetría al tópico ROS 2 correspondiente (/ks6/telemetry_init
+    o /ks6/telemetry) y la imprime en stdout para registro local.
     """
     if line is None:
         return

@@ -9,7 +9,7 @@ M_MAX_DIST               = 140.0
 PUSH_LIMIT               = 30.0
 NEUTRAL_ZONE             = 5.0
 N_CRIT_DIST              = 15.0
-K_FORCE                  = 0.0
+K_FORCE                  = 1.2   # Solo escala la fuerza de REPULSIÓN (d <= PUSH_LIMIT - NEUTRAL_ZONE)
 MIN_FORCE_IGNORE         = 10.0
 
 VECTOR_CHANGE_TOL        = 10.0
@@ -117,8 +117,8 @@ def process(obs_ang_offset_global: float, updated_anterior_indices: dict, app_x_
         last_vector_mag = resultant_force
 
         # Usa directamente d_speed y g_speed del controlador del aprendiz sin recortarlos por resultant_force/angle
-        d_spd = _get_ctrl_num('d_speed', 30.0)
-        g_spd = _get_ctrl_num('g_speed', 80.0)
+        d_spd = _get_ctrl_num('d_speed', 8.0)
+        g_spd = _get_ctrl_num('g_speed', 44.46)
         front_thr = _get_ctrl_num('front_threshold', FRONT_THRESHOLD)
         back_thr = _get_ctrl_num('back_threshold', BACK_THRESHOLD)
 

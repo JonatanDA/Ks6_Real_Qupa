@@ -108,8 +108,8 @@ def process(obs_ang_offset_global: float, updated_anterior_indices: dict, app_x_
             elif out_pid_dist < min_pid_output:
                 out_pid_dist = min_pid_output
 
-            global_d = _get_ctrl_num('d_speed', 30.0)
-            global_g = _get_ctrl_num('g_speed', 80.0)
+            global_d = _get_ctrl_num('d_speed', 8.0)
+            global_g = _get_ctrl_num('g_speed', 44.46)
             out_speed_d = global_d if global_d > 0.0 else 0.0
             out_speed_g = global_g if global_g > 0.0 else 0.0
             do_move = True

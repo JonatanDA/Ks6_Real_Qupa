@@ -1,9 +1,9 @@
-# Archivo: Ks7/Functions/sensors.py
-# Ubicación: ~/sim_ws_qupa/Ks7/Functions/sensors.py
+# Archivo: Ks6/Functions/sensors.py
+# Ubicación: ~/sim_ws_qupa/Ks6/Functions/sensors.py
 # Descripción:
 #   Módulo compartido de lectura de sensores físicos para los robots Qupa en ROS 2 + Gazebo
 #   (sensores de suelo base_ground / motor_ground y sensores de proximidad IR).
-#   Equivalente 1:1 de Ks7/Functions/sensors.lua.
+#   Equivalente 1:1 de Ks6/Functions/sensors.lua.
 
 import math
 

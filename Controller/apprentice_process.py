@@ -1,11 +1,11 @@
-# Archivo: Ks7/apprentice_process.py
-# Ubicación: ~/sim_ws_qupa/Ks7/Controller/apprentice_process.py
+# Archivo: Ks6/apprentice_process.py
+# Ubicación: ~/sim_ws_qupa/Ks6/Controller/apprentice_process.py
 # Descripción:
 #   Submódulo de procesamiento lógico del aprendiz (paciencia, segmentación,
 #   parametrización, almacenamiento, similitud de comportamientos y reconstrucción global).
-#   Toma sus parámetros desde Ks7_apprentice_controller.py (y solo usa valores por defecto
+#   Toma sus parámetros desde Ks6_apprentice_controller.py (y solo usa valores por defecto
 #   estilo `var = var or default` cuando se importa de forma aislada).
-#   Equivalente 1:1 de Ks7/Controller/apprentice_process.lua.
+#   Equivalente 1:1 de Ks6/Controller/apprentice_process.lua.
 
 from builtins import print
 import math
@@ -29,20 +29,20 @@ param_store = ParameterStorage()
 
 # ============================================================================
 # [SECCIÓN 2] VARIABLES GLOBALES DE ESTADO Y MEMORIA
-# (Heredadas del controlador principal Ks7_apprentice_controller si existe)
+# (Heredadas del controlador principal Ks6_apprentice_controller si existe)
 # ============================================================================
 ticks_per_second                    = shared_config.get_controller_var("ticks_per_second", 4)
 max_time                            = shared_config.get_controller_var("max_time", 5000 * ticks_per_second)
 Distribucion_sensores_de_proximidad = shared_config.get_controller_var("Distribucion_sensores_de_proximidad", [0, -45, 45, -90, 90, 180])
 Num_cantidad_leds                   = shared_config.get_controller_var("Num_cantidad_leds", 2)
-FOOTBOT_INTERWHEEL_DISTANCE         = shared_config.get_controller_var("FOOTBOT_INTERWHEEL_DISTANCE", 14)
+FOOTBOT_INTERWHEEL_DISTANCE         = shared_config.get_controller_var("FOOTBOT_INTERWHEEL_DISTANCE", 8.6)
 
 factor_vel                          = shared_config.get_controller_var("factor_vel", 1)
-speed_dem                           = shared_config.get_controller_var("speed_dem", 10 * factor_vel)
-speed_dem_g                         = shared_config.get_controller_var("speed_dem_g", (speed_dem / 2))
+speed_dem                           = shared_config.get_controller_var("speed_dem", 6.0 * factor_vel)
+speed_dem_g                         = shared_config.get_controller_var("speed_dem_g", 40.0)
 
-d_speed                             = shared_config.get_controller_var("d_speed", 30)
-g_speed                             = shared_config.get_controller_var("g_speed", 80)
+d_speed                             = shared_config.get_controller_var("d_speed", 8.0)
+g_speed                             = shared_config.get_controller_var("g_speed", 44.46)
 
 distance_treshold                   = shared_config.get_controller_var("distance_treshold", 20)
 MAX_PATIENCE                        = shared_config.get_controller_var("MAX_PATIENCE", 160 * ticks_per_second)
@@ -120,7 +120,7 @@ def fmt_f(val, decimals=2):
 
 def apply_injected_vars(vars_dict: dict):
     """
-    Sincroniza primero las variables desde Ks7_apprentice_controller y aplica encima
+    Sincroniza primero las variables desde Ks6_apprentice_controller y aplica encima
     únicamente las variables explícitamente recibidas en `--vars` (vars_dict).
     """
     global speed_dem, speed_dem_g, MAX_PATIENCE, BASE_RESTORE, TIEMPO_RW_TICKS, current_patience

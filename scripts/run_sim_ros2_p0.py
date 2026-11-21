@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 # Archivo: scripts/run_sim_ros2_p0.py
-# Ubicación: ~/sim_ws_qupa/Ks7/scripts/run_sim_ros2_p0.py
+# Ubicación: ~/sim_ws_qupa/Ks6/scripts/run_sim_ros2_p0.py
 # Descripción:
 #   Orquestador secuencial en el robot físico Qupa (Raspberry Pi Zero W2).
 #   1) Opcionalmente lanza el stack de hardware (hardware.launch.py) si AUTO_LAUNCH_HARDWARE = True.
 #      (Recomendado dejarlo en False si ya lanzaste hardware.launch.py en una terminal aparte).
 #   2) Lanza opcionalmente la cámara (camera.launch.py) si es aprendiz o si ENABLE_MASTER_CAMERA = True.
 #   3) Lanza finalmente el controlador seleccionado con use_sim_time:=false.
-# Uso desde ~/sim_ws_qupa/Ks7:
-#   python3 scripts/run_sim_ros2_p0.py --id qupa_D2 --role master --controller Controller/Ks8_master_controller.py
+# Uso desde ~/sim_ws_qupa/Ks6:
+#   python3 scripts/run_sim_ros2_p0.py --id qupa_D2 --role master --controller Controller/Ks6_master_controller.py
 
 import os
 import sys
@@ -23,7 +23,7 @@ PROJECT_ROOT_DIR = os.path.dirname(_THIS_FILE_DIR) if os.path.basename(_THIS_FIL
 if PROJECT_ROOT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_ROOT_DIR)
 
-CONFIG_JSON_PATH = f"/tmp/ks7_robot_config_p0_{os.getpid()}.json"
+CONFIG_JSON_PATH = f"/tmp/ks6_robot_config_p0_{os.getpid()}.json"
 
 # =============================================================================
 # ---------- 1. DICCIONARIO DE EVALUADORES Y DEPENDENCIAS ----------
@@ -53,8 +53,8 @@ TRACKER_DEPENDENCIES = {
 # ---------- 3. SELECCIÓN DE CONTROLADOR Y CONFIGURACIÓN DEL ROBOT FÍSICO -----
 # =============================================================================
 DEFAULT_CONTROLLER_SCRIPTS = {
-    "master":          "Controller/Ks8_master_controller.py",
-    "apprentice":      "Controller/Ks7_apprentice_controller.py",
+    "master":          "Controller/Ks6_master_controller.py",
+    "apprentice":      "Controller/Ks6_apprentice_controller.py",
 }
 
 # Controlador y parámetros por defecto cuando se ejecuta `python3 scripts/run_sim_ros2_p0.py`
@@ -78,7 +78,15 @@ ENABLE_MASTER_CAMERA       = True   # True = activa cámara en el maestro | Fals
 
 HARDWARE_LAUNCH_PACKAGE    = "qupa_hardware"
 HARDWARE_LAUNCH_FILE       = "hardware.launch.py"
-CAMERA_LAUNCH_FILE         = "camera.launch.py"
+# Modo de cámara real en qupa_hardware:
+#   "detections"  -> camera.launch.py (publica /{id}/camera/detections, NECESARIO para que el aprendiz detecte maestros)
+#   "calibration" -> camera_calibration.launch.py (publica /{id}/camera/image_calibration/compressed para ver/calibrar en RViz/rqt)
+DEFAULT_CAMERA_MODE        = "detections"
+CAMERA_LAUNCH_FILES        = {
+    "detections":  "camera.launch.py",
+    "calibration": "camera_calibration.launch.py",
+}
+CAMERA_LAUNCH_FILE         = CAMERA_LAUNCH_FILES[DEFAULT_CAMERA_MODE]
 
 # Tiempos de espera secuencial (en segundos):
 WAIT_AFTER_HARDWARE_SEC    = 12.0
@@ -160,7 +168,7 @@ def wait_for_ros_topics(required_topics, run_env, timeout_sec=10.0):
         "from rclpy.node import Node\n"
         "topics = sys.argv[1:]\n"
         "rclpy.init()\n"
-        "node = Node('ks7_p0_graph_waiter')\n"
+        "node = Node('ks6_p0_graph_waiter')\n"
         "t0 = time.time()\n"
         "ok = False\n"
         "while time.time() - t0 < float(topics[0]):\n"
@@ -204,10 +212,19 @@ def main():
     parser.add_argument("--launch_hardware", action="store_true", help="Forzar el lanzamiento de hardware.launch.py")
     parser.add_argument("--no_hardware", action="store_true", help="Omitir el lanzamiento de hardware.launch.py (si ya está corriendo)")
     parser.add_argument("--launch_camera", action="store_true", help="Forzar el lanzamiento de camera.launch.py")
-    parser.add_argument("--no_camera", action="store_true", help="No lanzar camera.launch.py")
+    parser.add_argument("--no_camera", action="store_true", help="No lanzar cámara")
+    parser.add_argument("--camera_mode", type=str, default=DEFAULT_CAMERA_MODE, choices=["detections", "calibration"], help="detections=camera.launch.py (/{id}/camera/detections) | calibration=camera_calibration.launch.py (video comprimido)")
     parser.add_argument("--wait_hw", type=float, default=WAIT_AFTER_HARDWARE_SEC, help="Segundos de espera tras lanzar hardware.launch.py")
     parser.add_argument("--wait_cam", type=float, default=WAIT_AFTER_CAMERA_SEC, help="Segundos de espera tras lanzar camera.launch.py")
     args = parser.parse_args()
+    # Normalizar ID corto (ej. 'D2' -> 'qupa_D2') respetando namespaces que ya inicien con 'qupa_' o 'Qupa'
+    raw_id = args.id.strip().lstrip('/')
+    if not (raw_id.lower().startswith('qupa')):
+        args.id = f'qupa_{raw_id}'
+        print_log(f'[P0-Real] ID normalizado: "{raw_id}" -> "{args.id}"')
+    else:
+        args.id = raw_id
+    selected_cam_launch = CAMERA_LAUNCH_FILES.get(args.camera_mode, CAMERA_LAUNCH_FILE)
 
     os.chdir(PROJECT_ROOT_DIR)
 
@@ -304,13 +321,15 @@ def main():
         # ETAPA 2: Cámara omnidireccional
         if should_launch_cam:
             cam_cmd = [
-                "ros2", "launch", HARDWARE_LAUNCH_PACKAGE, CAMERA_LAUNCH_FILE,
+                "ros2", "launch", HARDWARE_LAUNCH_PACKAGE, selected_cam_launch,
                 f"namespace:={args.id}",
             ]
             print_log(f"\n[P0] Etapa 2/3: Lanzando nodo de cámara -> {' '.join(cam_cmd)}")
             cam_proc = subprocess.Popen(cam_cmd, env=run_env, start_new_session=True)
             wait_with_countdown(args.wait_cam, f"{CAMERA_LAUNCH_FILE} ({args.id})")
-            wait_for_ros_topics([f"/{args.id}/camera/detections"], run_env, timeout_sec=8.0)
+            expected_cam_topic = f"/{args.id}/camera/detections" if args.camera_mode == "detections" else f"/{args.id}/camera/image_calibration/compressed"
+            print_log(f"[P0-Real] Modo cámara: {args.camera_mode} ({selected_cam_launch}) -> esperando {expected_cam_topic}")
+            wait_for_ros_topics([expected_cam_topic], run_env, timeout_sec=10.0)
         else:
             print_log(f"\n[P0] Etapa 2/3: (Omitida) Cámara desactivada para rol '{args.role}'.")
 

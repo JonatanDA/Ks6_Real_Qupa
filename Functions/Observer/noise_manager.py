@@ -1,6 +1,6 @@
 # Archivo: Functions/Observer/noise_manager.py
 # Ubicación exacta:
-#   ~/sim_ws_qupa/experimento_ks5/Functions/Observer/noise_manager.py
+#   ~/sim_ws_qupa/Ks6/Functions/Observer/noise_manager.py
 
 import math
 import random

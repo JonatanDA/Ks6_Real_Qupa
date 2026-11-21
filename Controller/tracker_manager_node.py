@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-# Archivo: Ks7/Controller/tracker_manager_node.py
-# Ubicación: ~/sim_ws_qupa/Ks7/Controller/tracker_manager_node.py
+# Archivo: Ks6/Controller/tracker_manager_node.py
+# Ubicación: ~/sim_ws_qupa/Ks6/Controller/tracker_manager_node.py
 # Descripción:
-#   Nodo central receptor de telemetría en ROS 2 (Fase 2 de Ks7).
+#   Nodo central receptor de telemetría en ROS 2 (Fase 2 de Ks6).
 #   Recibe la lista de TRACKERS desde el JSON de configuración, los levanta como
 #   subprocesos con stdin=subprocess.PIPE y les reenvía por stdin cada línea recibida
-#   en /ks7/telemetry_init (RELIABLE + TRANSIENT_LOCAL) y /ks7/telemetry (RELIABLE),
+#   en /ks6/telemetry_init (RELIABLE + TRANSIENT_LOCAL) y /ks6/telemetry (RELIABLE),
 #   manteniendo los 9 scripts tracker_*.py y evaluator_*.py 100% intactos.
 
 import json
@@ -33,11 +33,11 @@ from std_msgs.msg import String
 class TrackerManagerNode(Node):
     def __init__(self):
         super().__init__(
-            'ks7_tracker_manager_node',
-            parameter_overrides=[Parameter('use_sim_time', Parameter.Type.BOOL, True)],
+            'ks6_tracker_manager_node',
+            parameter_overrides=[Parameter('use_sim_time', Parameter.Type.BOOL, False)],  # Reloj de pared: compatible con Gazebo y robots reales
         )
 
-        self.declare_parameter('config_file', '/tmp/ks7_robots_config.json')
+        self.declare_parameter('config_file', '/tmp/ks6_robots_config.json')
         self.declare_parameter('auto_stop_on_end', True)
         self.declare_parameter('max_idle_timeout_sec', 240.0)
         self.declare_parameter('nivel_log', 2)
