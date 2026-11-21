@@ -1,35 +1,21 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<!--
-  Archivo: cyclonedds_config.xml
-  Ubicación sugerida: ~/sim_ws_qupa/Ks6/cyclonedds_config.xml (o ~/qupa_ws/src/qupa/cyclonedds_config.xml)
-  Descripción:
-    Configuración explícita de CycloneDDS (Unicast + Multicast) entre tu PC y el robot físico qupa_D2.
-    - IP de la PC:       192.168.0.105
-    - IP del qupa_D2:    192.168.0.116
-    Nota: El repositorio oficial coral-espol/qupa NO incluye un archivo XML por defecto (solo define
-    RMW_IMPLEMENTATION=rmw_cyclonedds_cpp y ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET en ros2_env_robot.bash
-    y ros2_env_pc.bash). Este archivo evita pérdidas de descubrimiento multicast por Wi-Fi/routers.
--->
 <CycloneDDS xmlns="https://cdds.io/config"
             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
             xsi:schemaLocation="https://cdds.io/config https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/master/etc/cyclonedds.xsd">
   <Domain Id="any">
     <General>
       <Interfaces>
-        <!-- Selecciona automáticamente la interfaz dentro de la subred 192.168.0.0/24 -->
-        <NetworkInterface address="192.168.0.0" />
+        <NetworkInterface address="192.168.12.0" />
       </Interfaces>
-      <AllowMulticast>default</AllowMulticast>
+      <AllowMulticast>false</AllowMulticast>
       <MaxMessageSize>65500B</MaxMessageSize>
     </General>
     <Discovery>
       <ParticipantIndex>auto</ParticipantIndex>
       <MaxAutoParticipantIndex>100</MaxAutoParticipantIndex>
       <Peers>
-        <!-- PC de desarrollo / estación base -->
-        <Peer address="192.168.0.105" />
-        <!-- Robot físico Qupa D2 -->
-        <Peer address="192.168.0.116" />
+        <Peer address="192.168.12.1" />
+        <Peer address="192.168.12.154" />
       </Peers>
     </Discovery>
   </Domain>
