@@ -1,4 +1,4 @@
-# Archivo: Ks6_ROS2_Gazebo/Functions/move.py
+# Archivo: Ks6_Real_Qupa/Functions/move_lazo_abierto.py  [CASO 1: LAZO ABIERTO PURO - Qupa Real]
 # Ubicación: ~/sim_ws_qupa/Ks6/Functions/move.py
 # Descripción:
 #   Módulo compartido de movimiento y navegación para los Qupa en ROS 2 (Simulación y Hardware Real):

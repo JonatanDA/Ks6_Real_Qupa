@@ -83,7 +83,7 @@ def change_al_state(app, new_state: str, log_msg: str = "", finish_reason: str =
 #   - "table"     : Interpolación lineal por tramos sobre puntos medidos (px, cm)
 #   - "linear"    : Escala lineal directa (px * CAM_PX_TO_CM_LINEAR + CAM_RADIAL_OFFSET_CM)
 # ----------------------------------------------------------------------------
-CAM_CALIB_MODE              = "optical"
+CAM_CALIB_MODE              = "table"  # "optical" | "polynomial" | "table" | "linear"
 
 # Geometría de imagen y anillo en píxeles (acorde a camera_sim.yaml / mirror.xacro)
 CAM_IMG_WIDTH_PX            = 720.0
@@ -323,6 +323,17 @@ def store_relative_positions(
         if app.obs_stop_flag:
             app.current_wait_ticks += 1
             if app.current_wait_ticks > MAX_WAIT_TICKS:
+                cur_ang_abort = _norm_rad(srt_ang_mark_ant + float(getattr(app, 'move_angle', 0.0)))
+                dx_ab, dy_ab = math_helper.polarACartesianoPAR(
+                    float(getattr(app, 'move_distance', 0.0)), cur_ang_abort
+                )
+                x_ant_r = x_ant_r + dx_ab
+                y_ant_r = y_ant_r + dy_ab
+                srt_ang_mark_ant = cur_ang_abort
+                app.x_mark = x_ant_r
+                app.y_mark = y_ant_r
+                x_mark = app.x_mark
+                y_mark = app.y_mark
                 Move.r_move(app)
                 Move.set_wheels_cm_s(app, 0.0, 0.0, apprentice_process.FOOTBOT_INTERWHEEL_DISTANCE)
 
@@ -353,7 +364,7 @@ def store_relative_positions(
             else float(apprentice_process.g_speed)
         )
 
-        Move.move(
+        _, _, cur_move_dist, cur_move_ang = Move.move(
             app,
             app.last_motion_marker[0],
             app.last_motion_marker[1],
@@ -364,6 +375,8 @@ def store_relative_positions(
         )
     else:
         app.current_wait_ticks = 0
+        cur_move_dist = 0.0
+        cur_move_ang = 0.0
 
     # =========================================================================
     # FASE A: Recolección y Ruido
@@ -378,19 +391,21 @@ def store_relative_positions(
     )
 
     # =========================================================================
-    # FASE A.5: CORRECCIÓN DE ODOMETRÍA
+    # FASE A.5: CORRECCIÓN DE ODOMETRÍA (EXCLUSIVAMENTE DESDE LO QUE DEVUELVE Move.move)
     # =========================================================================
-    dx_global_cm = (app.x - app.cycle_origin_x) * 100.0
-    dy_global_cm = (app.y - app.cycle_origin_y) * 100.0
-    cos_c = math.cos(-app.cycle_origin_yaw)
-    sin_c = math.sin(-app.cycle_origin_yaw)
-    app.x_mark = dx_global_cm * cos_c - dy_global_cm * sin_c
-    app.y_mark = dx_global_cm * sin_c + dy_global_cm * cos_c
+    obs_ang_offset_global = _norm_rad(srt_ang_mark_ant + float(cur_move_ang))
+    dx_mov_cm, dy_mov_cm = math_helper.polarACartesianoPAR(
+        float(cur_move_dist), obs_ang_offset_global
+    )
+    app.x_mark = x_ant_r + dx_mov_cm
+    app.y_mark = y_ant_r + dy_mov_cm
     x_mark = app.x_mark
     y_mark = app.y_mark
-    obs_ang_offset_global = _norm_rad(app.yaw - app.cycle_origin_yaw)
 
     if app.motion_active and app.c1 == 2:
+        x_ant_r = app.x_mark
+        y_ant_r = app.y_mark
+        srt_ang_mark_ant = obs_ang_offset_global
         app.motion_active = False
         app.current_wait_ticks = 0
         Move.r_move(app)
@@ -442,6 +457,9 @@ def store_relative_positions(
 
             # 1. DETENER MOVIMIENTO SI HAY UNA EMERGENCIA NUEVA (Y no estamos ya evadiendo)
             if (is_prox_critical or is_cam_critical) and app.motion_active and not is_evading:
+                x_ant_r = app.x_mark
+                y_ant_r = app.y_mark
+                srt_ang_mark_ant = obs_ang_offset_global
                 app.motion_active = False
                 Move.r_move(app)
                 Move.set_wheels_cm_s(app, 0.0, 0.0, apprentice_process.FOOTBOT_INTERWHEEL_DISTANCE)
