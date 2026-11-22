@@ -329,7 +329,7 @@ def main():
             wait_with_countdown(args.wait_cam, f"{CAMERA_LAUNCH_FILE} ({args.id})")
             expected_cam_topic = f"/{args.id}/camera/detections" if args.camera_mode == "detections" else f"/{args.id}/camera/image_calibration/compressed"
             print_log(f"[P0-Real] Modo cámara: {args.camera_mode} ({selected_cam_launch}) -> esperando {expected_cam_topic}")
-            wait_for_ros_topics([expected_cam_topic], run_env, timeout_sec=10.0)
+            wait_for_ros_topics([expected_cam_topic], run_env, timeout_sec=35.0)
         else:
             print_log(f"\n[P0] Etapa 2/3: (Omitida) Cámara desactivada para rol '{args.role}'.")
 

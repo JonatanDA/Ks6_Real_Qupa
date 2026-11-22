@@ -1,4 +1,4 @@
-# Archivo: Ks6/Functions/move.py
+# Archivo: Ks6_ROS2_Gazebo/Functions/move.py
 # Ubicación: ~/sim_ws_qupa/Ks6/Functions/move.py
 # Descripción:
 #   Módulo compartido de movimiento y navegación para los Qupa en ROS 2 (Simulación y Hardware Real):
@@ -52,7 +52,8 @@ def _integrate_open_loop_pose(rob, dt: float):
     (cmd_linear_x, cmd_angular_z) y el paso de tiempo dt cuando no existe tópico /odom
     (robots físicos Qupa sin encoders).
     """
-    # En Ks6 Real Qupa no existe odometría global (/odom): siempre integra en lazo abierto por tiempo.
+    if getattr(rob, 'odom_received', False):
+        return
     if dt <= 0.0:
         return
     v = float(getattr(rob, 'cmd_linear_x', 0.0))
@@ -237,6 +238,8 @@ def move(
                 rob.cmd_linear_x = 0.0
                 rob.cmd_angular_z = 0.0
                 rob.move_angle = math.radians(target_angle)
+                rob.elapsed_ang_s = 0.0
+                rob.actual_ang_ticks = 0
                 rob.c1 = 1
             else:
                 # Tiempo restante de giro en este paso dt
@@ -292,6 +295,8 @@ def move(
                 rob.cmd_linear_x = 0.0
                 rob.cmd_angular_z = 0.0
                 rob.move_distance = float(distance)
+                rob.elapsed_dis_s = 0.0
+                rob.actual_dis_ticks = 0
                 rob.c1 = 2
                 rob.c2 += 1
                 utils_mod.r_Temporizador_2(rob)
