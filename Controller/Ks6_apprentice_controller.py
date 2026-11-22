@@ -59,7 +59,7 @@ MAX_LINEAR_SPEED_CM_S               = 8.0     # Velocidad lineal máxima: 8.0 cm
 MAX_ANGULAR_SPEED_RAD_S             = 0.776   # Velocidad angular máxima: 0.776 rad/s (~44.46 °/s)
 
 distance_treshold                   = 20
-MAX_PATIENCE                        = 200 * ticks_per_second
+MAX_PATIENCE                        = 2000 * ticks_per_second
 BASE_RESTORE                        = 30  * ticks_per_second
 
 # Métricas del modelo de ActiveLearning
