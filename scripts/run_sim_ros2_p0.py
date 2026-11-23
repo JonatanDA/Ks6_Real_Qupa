@@ -80,10 +80,12 @@ ENABLE_MASTER_CAMERA       = False   # True = activa cámara en el maestro | Fal
 # True  = lanza automáticamente solo el nodo mpu6050 (sin polygon_trajectory_node).
 # False = se asume que ya lanzaste el nodo mpu6050 aparte (o usa --no_imu).
 AUTO_LAUNCH_IMU            = True
+SHOW_IMU_LOGS              = False   # True: muestra [INFO]/[WARN] de mpu6050 (Tare, etc.) | False: solo errores
 IMU_PACKAGE                = "qupa_imu_test"
 IMU_EXECUTABLE             = "mpu6050"
 IMU_SUBNAMESPACE           = "mpu6050"
 WAIT_AFTER_IMU_SEC         = 4.0
+CLEAR_LEDS_ON_EXIT         = True    # True: apaga la tira LED (/{id}/set -> clear) al salir con Ctrl+C
 
 HARDWARE_LAUNCH_PACKAGE    = "qupa_hardware"
 HARDWARE_LAUNCH_FILE       = "hardware.launch.py"
@@ -360,6 +362,8 @@ def main():
                 "-r", f"__ns:=/{args.id}/{IMU_SUBNAMESPACE}",
                 "-p", f"frame_id:={args.id}/imu_link",
             ]
+            if not SHOW_IMU_LOGS:
+                imu_cmd.extend(["--log-level", "error"])
             try:
                 from ament_index_python.packages import get_package_share_directory
                 imu_yaml = os.path.join(get_package_share_directory(IMU_PACKAGE), "config", "mpu6050.yaml")
@@ -398,6 +402,23 @@ def main():
         print_log(f"\n[P0] Interrumpido por el usuario (Ctrl+C). Apagando {args.id} en orden inverso...")
     finally:
         terminate_process(ctrl_proc, f"controlador ({script_path})")
+        if CLEAR_LEDS_ON_EXIT:
+            try:
+                print_log(f"[P0] Apagando LEDs de {args.id}...")
+                subprocess.run(
+                    [
+                        "ros2", "service", "call",
+                        f"/{args.id}/set",
+                        "qupa_msgs/srv/LEDCommand",
+                        '{command: "{\"mode\": \"clear\"}"}',
+                    ],
+                    env=run_env,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=5.0,
+                )
+            except Exception:
+                pass
         stop_process_group(imu_proc, f"{IMU_PACKAGE}/{IMU_EXECUTABLE}")
         stop_process_group(cam_proc, CAMERA_LAUNCH_FILE)
         stop_process_group(hw_proc, HARDWARE_LAUNCH_FILE)
