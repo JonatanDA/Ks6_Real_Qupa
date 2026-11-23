@@ -64,7 +64,7 @@ BASE_RESTORE                        = 30  * ticks_per_second
 
 # Métricas del modelo de ActiveLearning
 back_threshold                      = 10
-front_threshold                     = 30
+front_threshold                     = 25
 max_tracking_distance               = 10
 porcentaje                          = 0.75
 
@@ -123,6 +123,13 @@ from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
 from qupa_msgs.msg import DetectionArray
+
+try:
+    from qupa_msgs.srv import LEDCommand
+    HAS_QUPA_LED_SRV = True
+except ImportError:
+    LEDCommand = None
+    HAS_QUPA_LED_SRV = False
 
 try:
     from gz.transport13 import Node as GzNode
@@ -636,6 +643,9 @@ class Ks6ApprenticeControllerNode(Node):
         # Publicador de velocidad diferencial (Twist saturado a 0.08 m/s y 0.776 rad/s)
         self.cmd_vel_pub = self.create_publisher(Twist, f'/{self.robot_id}/cmd_vel', 10)
         self.led_pub = self.create_publisher(String, f'/{self.robot_id}/leds/color', 10)
+        self.led_srv_client = None
+        if HAS_QUPA_LED_SRV:
+            self.led_srv_client = self.create_client(LEDCommand, f'/{self.robot_id}/set')
 
         self.create_subscription(
             Odometry,
@@ -710,13 +720,26 @@ class Ks6ApprenticeControllerNode(Node):
         msg.data = str(text)
         self.telemetry_pub.publish(msg)
 
-    def _set_led(self, rob, color: str):
+    def _set_led(self, rob, color: str, force_topic_pub: bool = False):
         Utils.setleds(
             rob,
             color,
             led_pub=self.led_pub,
             gz_mat_pub=self.gz_mat_pub,
+            force_topic_pub=force_topic_pub,
+            led_srv_client=self.led_srv_client,
         )
+
+    def stop_hardware(self):
+        """Detiene motores y apaga la tira LED APA102 al cerrar el controlador."""
+        try:
+            twist = Twist()
+            twist.linear.x = 0.0
+            twist.angular.z = 0.0
+            self.cmd_vel_pub.publish(twist)
+            self._set_led(self.rob, "black", force_topic_pub=True)
+        except Exception:
+            pass
 
     def init(self):
         rob = self.rob
@@ -785,7 +808,7 @@ class Ks6ApprenticeControllerNode(Node):
         pass
 
     def destroy(self):
-        pass
+        self.stop_hardware()
 
     def _scan_cb(self, msg: LaserScan):
         Sensors.process_laser_scan(self.rob, msg)
@@ -887,6 +910,7 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
+        node.stop_hardware()
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
