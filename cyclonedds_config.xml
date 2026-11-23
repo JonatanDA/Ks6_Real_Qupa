@@ -15,6 +15,7 @@
       <MaxAutoParticipantIndex>100</MaxAutoParticipantIndex>
       <Peers>
         <Peer address="192.168.0.5" />
+        <Peer address="192.168.0.117" />
         <Peer address="192.168.0.118" />
         <Peer address="192.168.0.119" />
       </Peers>
