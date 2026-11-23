@@ -5,7 +5,7 @@
   <Domain Id="any">
     <General>
       <Interfaces>
-        <NetworkInterface address="192.168.12.0" />
+        <NetworkInterface address="192.168.0.0" />
       </Interfaces>
       <AllowMulticast>false</AllowMulticast>
       <MaxMessageSize>65500B</MaxMessageSize>
@@ -14,8 +14,8 @@
       <ParticipantIndex>auto</ParticipantIndex>
       <MaxAutoParticipantIndex>100</MaxAutoParticipantIndex>
       <Peers>
-        <Peer address="192.168.12.1" />
-        <Peer address="192.168.12.154" />
+        <Peer address="192.168.0.5" />
+        <Peer address="192.168.0.119" />
       </Peers>
     </Discovery>
   </Domain>
