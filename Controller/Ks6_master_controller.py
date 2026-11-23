@@ -65,6 +65,9 @@ IMU_TARE_TIMEOUT_S                  = 5.0     # s máximo de espera al servicio 
 IMU_TIMEOUT_FACTOR                  = 2.5     # Seguridad: aborta giro tras factor × tiempo esperado
 IMU_MEASURED_LINEAR_SPEED_CM_S      = 0.0     # cm/s real medido con regla (0.0 → usa speed_dem / d_speed)
 
+# Pausa con LEDs apagados al finalizar cada repetición del comportamiento (en segundos)
+PAUSA_FIN_PATRON_SEG                = 3.0
+
 # Asignación de figura según ID del robot Maestro
 distance_factor = 1
 
@@ -335,8 +338,11 @@ def master(
         )
 
         if rob.PI_end:
-            resetDEM(rob)
-            rob.d1 = 2 if loop_masters else 0
+            # Mantiene el robot quieto y con LEDs apagados durante PAUSA_FIN_PATRON_SEG segundos
+            Utils.Temporizador_1(rob, float(PAUSA_FIN_PATRON_SEG), ticks_per_second)
+            if not rob.temp:
+                resetDEM(rob)
+                rob.d1 = 2 if loop_masters else 0
 
     elif rob.d1 == 4:
         Move.set_wheels_cm_s(rob, 0.0, 0.0, FOOTBOT_INTERWHEEL_DISTANCE)
