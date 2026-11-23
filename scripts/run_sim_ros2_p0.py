@@ -73,7 +73,7 @@ AUTO_LAUNCH_HARDWARE       = False
 
 # Etapa 2: Cámara omnidireccional (camera.launch.py).
 # "AUTO": activa cámara en apprentice y usa ENABLE_MASTER_CAMERA para master; True: siempre; False: nunca.
-AUTO_LAUNCH_CAMERA         = False   # "AUTO" | True | False
+AUTO_LAUNCH_CAMERA         = "AUTO"   # "AUTO" | True | False
 ENABLE_MASTER_CAMERA       = False   # True = activa cámara en el maestro | False = desactivada
 
 # Etapa 2b: Driver IMU MPU6050 (paquete qupa_imu_test instalado en ~/qupa_ws).
