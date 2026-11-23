@@ -73,7 +73,7 @@ IMU_TIMEOUT_FACTOR                  = 2.5     # Seguridad: aborta giro tras fact
 IMU_MEASURED_LINEAR_SPEED_CM_S      = 0.0     # cm/s real medido con regla (0.0 → usa speed_dem / d_speed)
 
 distance_treshold                   = 20
-MAX_PATIENCE                        = 2000 * ticks_per_second
+MAX_PATIENCE                        = 200 * ticks_per_second
 BASE_RESTORE                        = 30  * ticks_per_second
 
 # Métricas del modelo de ActiveLearning
