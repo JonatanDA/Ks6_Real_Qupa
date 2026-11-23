@@ -80,7 +80,7 @@ ENABLE_MASTER_CAMERA       = False   # True = activa cámara en el maestro | Fal
 # True  = lanza automáticamente solo el nodo mpu6050 (sin polygon_trajectory_node).
 # False = se asume que ya lanzaste el nodo mpu6050 aparte (o usa --no_imu).
 AUTO_LAUNCH_IMU            = True
-SHOW_IMU_LOGS              = False   # True: muestra [INFO]/[WARN] de mpu6050 (Tare, etc.) | False: solo errores
+SHOW_IMU_LOGS              = True   # True: muestra [INFO]/[WARN] de mpu6050 (Tare, etc.) | False: solo errores
 IMU_PACKAGE                = "qupa_imu_test"
 IMU_EXECUTABLE             = "mpu6050"
 IMU_SUBNAMESPACE           = "mpu6050"
