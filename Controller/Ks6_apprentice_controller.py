@@ -54,9 +54,23 @@ d_speed                             = 0.0
 g_speed                             = 44.46
 
 # Métricas del modelo de observación y paciencia
-# Límites físicos de saturación del robot Qupa (Gazebo y Hardware Real)
+# Límites físicos de saturación del robot Qupa (Gazebo y Hardware Real) y configuración IMU (MPU6050)
 MAX_LINEAR_SPEED_CM_S               = 8.0     # Velocidad lineal máxima: 8.0 cm/s (0.08 m/s)
 MAX_ANGULAR_SPEED_RAD_S             = 0.776   # Velocidad angular máxima: 0.776 rad/s (~44.46 °/s)
+
+IMU_TOPIC_SUFFIX                    = "mpu6050/imu/data_raw"
+IMU_TARE_SERVICE_SUFFIX             = "mpu6050/tare"
+IMU_GYRO_Z_SIGN                     = 1.0     # -1.0 si el eje Z del MPU6050 apunta hacia abajo
+IMU_ANGULAR_SPEED_SLOW_RAD_S        = 0.72    # rad/s en zona lenta (> 0.70 rad/s deadband físico)
+IMU_TURN_SLOW_ZONE_DEG              = 30.0    # ° finales a velocidad lenta
+IMU_TURN_EARLY_STOP_DEG             = 15.0    # ° iniciales antes de la meta para frenar por inercia
+IMU_ADAPTIVE_EARLY_STOP             = True    # Ajusta early_stop con el sobrepaso medido en cada giro
+IMU_RETARE_EACH_SEGMENT             = True    # True: re-encera en cada vértice; False: sin tare ni esperas en move()
+IMU_TURN_PAUSE_S                    = 0.5     # s de pausa de frenado (solo activo si IMU_RETARE_EACH_SEGMENT=True)
+IMU_SETTLE_S                        = 0.3     # s tras el tare antes de girar (solo si IMU_RETARE_EACH_SEGMENT=True)
+IMU_TARE_TIMEOUT_S                  = 5.0     # s máximo de espera al servicio /tare
+IMU_TIMEOUT_FACTOR                  = 2.5     # Seguridad: aborta giro tras factor × tiempo esperado
+IMU_MEASURED_LINEAR_SPEED_CM_S      = 0.0     # cm/s real medido con regla (0.0 → usa speed_dem / d_speed)
 
 distance_treshold                   = 20
 MAX_PATIENCE                        = 2000 * ticks_per_second
@@ -120,8 +134,9 @@ from rclpy.parameter import Parameter
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import Imu, LaserScan
 from std_msgs.msg import String
+from std_srvs.srv import Trigger
 from qupa_msgs.msg import DetectionArray
 
 try:
@@ -667,6 +682,18 @@ class Ks6ApprenticeControllerNode(Node):
             self._detections_cb,
             10,
         )
+        # 3) Suscripción al IMU MPU6050 (/{robot_id}/mpu6050/imu/data_raw) y cliente de /tare
+        self.create_subscription(
+            Imu,
+            f'/{self.robot_id}/{IMU_TOPIC_SUFFIX}',
+            self._imu_cb,
+            50,
+        )
+        self.imu_tare_client = self.create_client(
+            Trigger,
+            f'/{self.robot_id}/{IMU_TARE_SERVICE_SUFFIX}',
+        )
+        self.rob.imu_tare_client = self.imu_tare_client
 
         self.tracker_printer = Utils.TrackerPrinter(active_funcs, self.robots)
         apprentice_process.Print_tracker_python = (
@@ -812,6 +839,9 @@ class Ks6ApprenticeControllerNode(Node):
 
     def _scan_cb(self, msg: LaserScan):
         Sensors.process_laser_scan(self.rob, msg)
+
+    def _imu_cb(self, msg: Imu):
+        Move.update_imu(self.rob, msg, self.get_clock().now().nanoseconds * 1e-9)
 
     def _detections_cb(self, msg: DetectionArray):
         apprentice_entries.update_camera_detections(self.rob, msg)

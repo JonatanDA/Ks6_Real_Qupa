@@ -76,6 +76,15 @@ AUTO_LAUNCH_HARDWARE       = False
 AUTO_LAUNCH_CAMERA         = False   # "AUTO" | True | False
 ENABLE_MASTER_CAMERA       = False   # True = activa cámara en el maestro | False = desactivada
 
+# Etapa 2b: Driver IMU MPU6050 (paquete qupa_imu_test instalado en ~/qupa_ws).
+# True  = lanza automáticamente solo el nodo mpu6050 (sin polygon_trajectory_node).
+# False = se asume que ya lanzaste el nodo mpu6050 aparte (o usa --no_imu).
+AUTO_LAUNCH_IMU            = True
+IMU_PACKAGE                = "qupa_imu_test"
+IMU_EXECUTABLE             = "mpu6050"
+IMU_SUBNAMESPACE           = "mpu6050"
+WAIT_AFTER_IMU_SEC         = 4.0
+
 HARDWARE_LAUNCH_PACKAGE    = "qupa_hardware"
 HARDWARE_LAUNCH_FILE       = "hardware.launch.py"
 # Modo de cámara real en qupa_hardware:
@@ -213,6 +222,8 @@ def main():
     parser.add_argument("--no_hardware", action="store_true", help="Omitir el lanzamiento de hardware.launch.py (si ya está corriendo)")
     parser.add_argument("--launch_camera", action="store_true", help="Forzar el lanzamiento de camera.launch.py")
     parser.add_argument("--no_camera", action="store_true", help="No lanzar cámara")
+    parser.add_argument("--launch_imu", action="store_true", help="Forzar el lanzamiento del driver mpu6050")
+    parser.add_argument("--no_imu", action="store_true", help="No lanzar el driver mpu6050 (si ya está corriendo)")
     parser.add_argument("--camera_mode", type=str, default=DEFAULT_CAMERA_MODE, choices=["detections", "calibration"], help="detections=camera.launch.py (/{id}/camera/detections) | calibration=camera_calibration.launch.py (video comprimido)")
     parser.add_argument("--wait_hw", type=float, default=WAIT_AFTER_HARDWARE_SEC, help="Segundos de espera tras lanzar hardware.launch.py")
     parser.add_argument("--wait_cam", type=float, default=WAIT_AFTER_CAMERA_SEC, help="Segundos de espera tras lanzar camera.launch.py")
@@ -250,6 +261,13 @@ def main():
         should_launch_cam = True if args.role.lower() == "apprentice" else bool(ENABLE_MASTER_CAMERA)
     else:
         should_launch_cam = bool(AUTO_LAUNCH_CAMERA)
+
+    if args.no_imu:
+        should_launch_imu = False
+    elif args.launch_imu:
+        should_launch_imu = True
+    else:
+        should_launch_imu = bool(AUTO_LAUNCH_IMU)
 
     robot_config = [{
         "id": args.id,
@@ -302,6 +320,7 @@ def main():
 
     hw_proc = None
     cam_proc = None
+    imu_proc = None
     ctrl_proc = None
 
     try:
@@ -333,6 +352,28 @@ def main():
         else:
             print_log(f"\n[P0] Etapa 2/3: (Omitida) Cámara desactivada para rol '{args.role}'.")
 
+        # ETAPA 2b: Driver IMU MPU6050 (solo driver de hardware, sin polygon_trajectory_node)
+        if should_launch_imu:
+            imu_cmd = [
+                "ros2", "run", IMU_PACKAGE, IMU_EXECUTABLE,
+                "--ros-args",
+                "-r", f"__ns:=/{args.id}/{IMU_SUBNAMESPACE}",
+                "-p", f"frame_id:={args.id}/imu_link",
+            ]
+            try:
+                from ament_index_python.packages import get_package_share_directory
+                imu_yaml = os.path.join(get_package_share_directory(IMU_PACKAGE), "config", "mpu6050.yaml")
+                if os.path.isfile(imu_yaml):
+                    imu_cmd.extend(["--params-file", imu_yaml])
+            except Exception:
+                pass
+            print_log(f"\n[P0] Etapa 2b: Lanzando driver IMU (mantén el robot quieto para tare) -> {' '.join(imu_cmd)}")
+            imu_proc = subprocess.Popen(imu_cmd, env=run_env, start_new_session=True)
+            wait_with_countdown(WAIT_AFTER_IMU_SEC, f"{IMU_EXECUTABLE} ({args.id})")
+            wait_for_ros_topics([f"/{args.id}/{IMU_SUBNAMESPACE}/imu/data_raw"], run_env, timeout_sec=15.0)
+        else:
+            print_log("\n[P0] Etapa 2b: (Omitida) Driver IMU desactivado o ya activo externamente.")
+
         # ETAPA 3: Controlador
         ctrl_cmd = [
             sys.executable, "-u", script_path,
@@ -357,6 +398,7 @@ def main():
         print_log(f"\n[P0] Interrumpido por el usuario (Ctrl+C). Apagando {args.id} en orden inverso...")
     finally:
         terminate_process(ctrl_proc, f"controlador ({script_path})")
+        stop_process_group(imu_proc, f"{IMU_PACKAGE}/{IMU_EXECUTABLE}")
         stop_process_group(cam_proc, CAMERA_LAUNCH_FILE)
         stop_process_group(hw_proc, HARDWARE_LAUNCH_FILE)
         if os.path.exists(CONFIG_JSON_PATH):
