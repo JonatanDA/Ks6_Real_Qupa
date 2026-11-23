@@ -40,8 +40,8 @@ Distribucion_sensores_de_proximidad = [0, -45, 45, -90, 90, 180]
 Num_cantidad_leds                   = 2
 FOOTBOT_INTERWHEEL_DISTANCE         = 8.6
 
-factor_vel                          = 1
-speed_dem                           = 6.0 * factor_vel
+factor_vel                          = 1.2
+speed_dem                           = 10.0 * factor_vel
 # speed_dem_g                         = (speed_dem / 2)
 speed_dem_g                         = 40.0
 
@@ -49,7 +49,7 @@ d_speed                             = 8.0
 g_speed                             = 44.46
 
 # Límites físicos y configuración del IMU (MPU6050) — fuente única de verdad
-MAX_LINEAR_SPEED_CM_S               = 8.0     # Velocidad lineal máxima: 8.0 cm/s (0.08 m/s)
+MAX_LINEAR_SPEED_CM_S               = 16.0     # Velocidad lineal máxima: 16.0 cm/s (0.16 m/s)
 MAX_ANGULAR_SPEED_RAD_S             = 0.776   # Velocidad angular máxima: 0.776 rad/s (~44.46 °/s)
 IMU_TOPIC_SUFFIX                    = "mpu6050/imu/data_raw"
 IMU_TARE_SERVICE_SUFFIX             = "mpu6050/tare"
