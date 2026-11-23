@@ -216,6 +216,14 @@ def original_params(figura: str, distance_factor: float = 1.0) -> dict:
                 [0.0, 60.0],
             ],
         }
+    if figura == "linea":
+        return {
+            'name': "triangulo",
+            'params': [
+                [distance_factor * 20.0, 60.0],
+                [0.0, 180.0],
+            ],
+        }
     if figura == "octagono":
         return {
             'name': "octagono",
