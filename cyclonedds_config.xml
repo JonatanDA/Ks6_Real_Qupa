@@ -14,10 +14,23 @@
       <ParticipantIndex>auto</ParticipantIndex>
       <MaxAutoParticipantIndex>100</MaxAutoParticipantIndex>
       <Peers>
+
         <Peer address="192.168.0.5" />
-        <Peer address="192.168.0.117" />
-        <Peer address="192.168.0.118" />
-        <Peer address="192.168.0.119" />
+
+        <!-- 48 -->
+        <Peer address="192.168.0.114" /> 
+
+        <!-- D2 -->
+        <Peer address="192.168.0.116" /> 
+
+        <!-- AE -->
+        <!-- <Peer address="192.168.0.117" />  -->
+
+        <!-- 3A -->
+        <!-- <Peer address="192.168.0.118" />  -->
+
+        <!-- F4 -->
+        <!-- <Peer address="192.168.0.119" />  -->
       </Peers>
     </Discovery>
   </Domain>
