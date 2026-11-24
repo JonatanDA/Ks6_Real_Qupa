@@ -86,9 +86,9 @@ def change_al_state(app, new_state: str, log_msg: str = "", finish_reason: str =
 CAM_CALIB_MODE              = "table"  # "optical" | "polynomial" | "table" | "linear"
 
 # Geometría de imagen y anillo en píxeles (acorde a camera_sim.yaml / mirror.xacro)
-CAM_IMG_WIDTH_PX            = 720.0
-CAM_IMG_HEIGHT_PX           = 720.0
-CAM_IMG_HALF_SIZE_PX        = 360.0   # Radio de normalización del shader (width / 2)
+CAM_IMG_WIDTH_PX            = 640.0
+CAM_IMG_HEIGHT_PX           = 480.0
+CAM_IMG_HALF_SIZE_PX        = 320.0   # Radio de normalización del shader (width / 2)
 CAM_INNER_RADIUS_PX         = 80.0    # Radio interno de la zona muerta del espejo
 CAM_OUTER_RADIUS_PX         = 300.0   # Radio externo útil del espejo
 
