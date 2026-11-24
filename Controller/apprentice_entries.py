@@ -110,13 +110,13 @@ CAM_RADIAL_SCALE_FACTOR     = 1.0     # Multiplicador global de escala en cm
 CAM_RADIAL_OFFSET_CM        = 0.0     # Offset aditivo en cm tras la conversión
 CAM_PX_TO_CM_LINEAR         = 0.35    # Equivalente directo cm/px (usado si CAM_CALIB_MODE == "linear")
 CAM_MIN_DISTANCE_CM         = 8.0     # Distancia mínima física entre centros de Qupa (cm)
-CAM_MAX_DISTANCE_CM         = 350.0   # Distancia máxima admisible en la arena (cm)
+CAM_MAX_DISTANCE_CM         = 80.0   # Distancia máxima admisible en la arena (cm)
 
 # Coeficientes para ajuste polinomial [a3, a2, a1, a0] -> d_cm = a3*px^3 + a2*px^2 + a1*px + a0
 CAM_POLY_COEFFS             = [0.0, 0.0022, -0.15, 5.0]
 
 # Tabla empírica de pares (distance_px, distance_cm) para interpolación si CAM_CALIB_MODE == "table"
-CAM_CALIB_POINTS_PX_CM      = [
+CAM_CALIB_POINTS_PX_CM = [
     (77.77, 12.0),
     (84.83, 15.0),
     (88.67, 18.0),
@@ -126,14 +126,12 @@ CAM_CALIB_POINTS_PX_CM      = [
     (95.79, 30.0),
     (96.72, 33.0),
     (97.71, 36.0),
-    (98.70, 39.0),
-    (98.65, 42.0),
+    (98.68, 40.5),  # promedio de 39 y 42 cm (evita inversión 98.70 > 98.65)
     (99.65, 45.0),
-    (100.65, 48.0),
-    (100.71, 51.0),
-    (101.77, 54.0),
-    (101.70, 57.0),
-    (102.55, 70.0),
+    (100.71, 51.0), # punto medio de 48-54 cm (suaviza el salto de 0.06 px)
+    (101.70, 60.0),
+    (102.64, 70.0),
+    (103.64, 80.0),
 ]
 
 # Convención angular entre camera_sim_node (atan2(vx, -vy), horario+) y marco ROS 2 del robot (antihorario+)

@@ -562,7 +562,8 @@ class Ks6ApprenticeControllerNode(Node):
         aperture_deg = self.get_parameter('camera_aperture_deg').get_parameter_value().double_value
         cam_height_m = self.get_parameter('camera_height_m').get_parameter_value().double_value
 
-        self.max_fov_radius_cm = math.tan(math.radians(aperture_deg)) * cam_height_m * 100.0
+        # self.max_fov_radius_cm = math.tan(math.radians(aperture_deg)) * cam_height_m * 100.0
+        self.max_fov_radius_cm = 70
 
         injected_vars = {}
         active_funcs = None
