@@ -17,6 +17,7 @@ import subprocess
 import time
 import json
 import argparse
+import threading
 
 _THIS_FILE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT_DIR = os.path.dirname(_THIS_FILE_DIR) if os.path.basename(_THIS_FILE_DIR) == "scripts" else _THIS_FILE_DIR
@@ -116,13 +117,58 @@ TRACKERS = [
 # =============================================================================
 # ---------- 5. CONFIGURACIÓN DE VERBOSIDAD ----------
 # =============================================================================
+# Niveles de log en consola (la telemetría a /ks6/telemetry para P2 SIEMPRE se publica completa):
+#   1 = Solo errores críticos y mensajes de estado de [P0]
+#   2 = [P0] + [PYTHON GESTOR] + logs de alto nivel (oculta telemetría cruda de trackers)
+#   3 = Todo, incluyendo telemetría cruda ([RAW-TELEM]: Timer=, [trajectory], [PACIENCIA], etc.)
 NIVEL_LOG = 2
 
 
-def print_log(msg):
-    if NIVEL_LOG >= 1:
-        sys.stdout.write(msg + "\n")
+def print_log(msg, required_level=1, actual_level=None, end="\n"):
+    lvl = NIVEL_LOG if actual_level is None else actual_level
+    if lvl >= required_level:
+        sys.stdout.write(str(msg) + end)
         sys.stdout.flush()
+
+
+def monitor_robot_node_stdout(proc_stdout, actual_nivel_log=2):
+    """Filtra la salida estándar del controlador según NIVEL_LOG (equivalente a Ks6_ROS2_Gazebo).
+    No afecta lo que se publica en /ks6/telemetry hacia run_sim_ros2_p2.py.
+    """
+    if proc_stdout is None:
+        return
+    try:
+        for line in proc_stdout:
+            line_clean = line.strip()
+            if not line_clean:
+                continue
+
+            is_tracker_raw_data = False
+            if (
+                line_clean.startswith("[trajectory]")
+                or line_clean.startswith("[PACIENCIA]")
+                or line_clean.startswith("[active_learning]")
+                or line_clean.startswith("[PID]")
+                or line_clean.startswith("[python]")
+                or line_clean.startswith("[EVALUATOR_RUIDO]")
+                or line_clean.startswith("[varianza]")
+                or line_clean.startswith("Otsu &")
+                or line_clean.startswith("End_simulation")
+                or line_clean.startswith("Timer=")
+            ):
+                is_tracker_raw_data = True
+
+            if " & " in line_clean and not ("[PYTHON GESTOR]" in line_clean or "[Gestor]" in line_clean):
+                is_tracker_raw_data = True
+
+            if "Traceback" in line_clean or "[ERROR]" in line_clean or "[FATAL]" in line_clean:
+                print_log(line, 1, actual_nivel_log, end="")
+            elif not is_tracker_raw_data:
+                print_log(line, 2, actual_nivel_log, end="")
+            elif is_tracker_raw_data and actual_nivel_log >= 3:
+                print_log(f"[RAW-TELEM] {line}", 3, actual_nivel_log, end="")
+    except Exception:
+        pass
 
 
 def terminate_process(proc, name="proceso"):
@@ -229,6 +275,7 @@ def main():
     parser.add_argument("--camera_mode", type=str, default=DEFAULT_CAMERA_MODE, choices=["detections", "calibration"], help="detections=camera.launch.py (/{id}/camera/detections) | calibration=camera_calibration.launch.py (video comprimido)")
     parser.add_argument("--wait_hw", type=float, default=WAIT_AFTER_HARDWARE_SEC, help="Segundos de espera tras lanzar hardware.launch.py")
     parser.add_argument("--wait_cam", type=float, default=WAIT_AFTER_CAMERA_SEC, help="Segundos de espera tras lanzar camera.launch.py")
+    parser.add_argument("--nivel_log", type=int, default=NIVEL_LOG, choices=[1, 2, 3], help=f"Nivel de verbosidad en consola: 1=errores, 2=gestor/resumen, 3=raw telemetry (default: {NIVEL_LOG})")
     args = parser.parse_args()
     # Normalizar ID corto (ej. 'D2' -> 'qupa_D2') respetando namespaces que ya inicien con 'qupa_' o 'Qupa'
     raw_id = args.id.strip().lstrip('/')
@@ -320,10 +367,12 @@ def main():
         print_log(f"[P0] CYCLONEDDS_URI:     {run_env.get('CYCLONEDDS_URI')}")
     print_log(f"[P0] Controlador final:  {script_path} (Figura: {args.figura or 'N/A'})")
 
+    actual_nivel_log = args.nivel_log
     hw_proc = None
     cam_proc = None
     imu_proc = None
     ctrl_proc = None
+    ctrl_stdout_thread = None
 
     try:
         # ETAPA 1: Drivers de hardware
@@ -393,7 +442,21 @@ def main():
         ]
         print_log(f"\n[P0] Etapa 3/3: Lanzando controlador {script_path}...")
         print_log(f"[P0] Telemetría habilitada: {', '.join(req_lua_funcs)}")
-        ctrl_proc = subprocess.Popen(ctrl_cmd, env=run_env)
+        print_log(f"[P0] NIVEL_LOG activo: {actual_nivel_log} (1=errores, 2=gestor/alto nivel, 3=telemetría cruda)")
+        ctrl_proc = subprocess.Popen(
+            ctrl_cmd,
+            env=run_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        ctrl_stdout_thread = threading.Thread(
+            target=monitor_robot_node_stdout,
+            args=(ctrl_proc.stdout, actual_nivel_log),
+            daemon=True,
+        )
+        ctrl_stdout_thread.start()
 
         while ctrl_proc.poll() is None:
             time.sleep(0.5)
@@ -402,6 +465,8 @@ def main():
         print_log(f"\n[P0] Interrumpido por el usuario (Ctrl+C). Apagando {args.id} en orden inverso...")
     finally:
         terminate_process(ctrl_proc, f"controlador ({script_path})")
+        if ctrl_stdout_thread is not None:
+            ctrl_stdout_thread.join(timeout=1.5)
         if CLEAR_LEDS_ON_EXIT:
             try:
                 print_log(f"[P0] Apagando LEDs de {args.id}...")
