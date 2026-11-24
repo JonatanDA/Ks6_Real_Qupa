@@ -78,7 +78,7 @@ BASE_RESTORE                        = 30  * ticks_per_second
 
 # Métricas del modelo de ActiveLearning
 back_threshold                      = 10
-front_threshold                     = 25
+front_threshold                     = 15
 max_tracking_distance               = 10
 porcentaje                          = 0.75
 

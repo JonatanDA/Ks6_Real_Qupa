@@ -117,12 +117,23 @@ CAM_POLY_COEFFS             = [0.0, 0.0022, -0.15, 5.0]
 
 # Tabla empírica de pares (distance_px, distance_cm) para interpolación si CAM_CALIB_MODE == "table"
 CAM_CALIB_POINTS_PX_CM      = [
-    (195.5, 20.0),
-    (223.8, 40.0),
-    (234.6, 60.0),
-    (240.3, 80.0),
-    (243.8, 100.0),
-    (246.2, 120.0),
+    (77.77, 12.0),
+    (84.83, 15.0),
+    (88.67, 18.0),
+    (91.73, 21.0),
+    (92.73, 24.0),
+    (94.72, 27.0),
+    (95.79, 30.0),
+    (96.72, 33.0),
+    (97.71, 36.0),
+    (98.70, 39.0),
+    (98.65, 42.0),
+    (99.65, 45.0),
+    (100.65, 48.0),
+    (100.71, 51.0),
+    (101.77, 54.0),
+    (101.70, 57.0),
+    (102.55, 70.0),
 ]
 
 # Convención angular entre camera_sim_node (atan2(vx, -vy), horario+) y marco ROS 2 del robot (antihorario+)
