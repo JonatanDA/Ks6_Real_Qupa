@@ -284,6 +284,24 @@ class ParameterStorage:
             return 0, 0, 0
 
         if structure_type is not None:
+            # Validación de distancia mínima por segmento usando CONFIG['TOL_DIST'] / 2:
+            # si algún componente de distancia ("D") es menor a TOL_DIST / 2, se descarta el fragmento.
+            tol_dist = None
+            if isinstance(cfg, dict) and isinstance(cfg.get('CONFIG'), dict):
+                tol_dist = cfg['CONFIG'].get('TOL_DIST')
+            if tol_dist is None:
+                tol_dist = 15.0
+            min_valid_dist = float(tol_dist) / 2.0
+
+            for idx, val in enumerate(structure_values):
+                if self.get_val_type(structure_type, idx) == "D" and float(val) < min_valid_dist:
+                    if self.PS_LOG_MODE >= 1:
+                        self.log(
+                            f"\n >> Fragmento ignorado: Distancia {self.fmt_f(float(val), 2)} cm "
+                            f"< umbral mínimo TOL_DIST/2 ({self.fmt_f(min_valid_dist, 2)} cm)."
+                        )
+                    return 0, 0, 0
+
             data_packet = {
                 'value': structure_values,
                 'type': structure_type,
