@@ -50,7 +50,7 @@ factor_vel                          = 0.6
 speed_dem                           = 10.0 * factor_vel
 speed_dem_g                         = 40.0
 
-d_speed                             = 0.0
+d_speed                             = 8.0
 g_speed                             = 44.46
 
 # Métricas del modelo de observación y paciencia
