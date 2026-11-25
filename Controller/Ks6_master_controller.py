@@ -34,13 +34,13 @@ random.seed(time.time())
 # - motor_driver_node tiene un watchdog de 0.3s (requiere ticks_per_second >= 4, recomendable 8-10 en físico)
 #   y un deadband de 0.03 m/s por rueda con wheel_base = 0.086 m (para girar en su propio eje en el
 #   robot físico se requiere velocidad angular >= 42 °/s, ej. speed_dem_g = 45, g_speed                             = 44.46).
-ticks_per_second                    = 4
+ticks_per_second                    = 16
 max_time                            = 5000 * ticks_per_second
 Distribucion_sensores_de_proximidad = [0, -45, 45, -90, 90, 180]
 Num_cantidad_leds                   = 2
 FOOTBOT_INTERWHEEL_DISTANCE         = 8.6
 
-factor_vel                          = 0.2
+factor_vel                          = 0.3
 speed_dem                           = 10.0 * factor_vel
 # speed_dem_g                         = (speed_dem / 2)
 speed_dem_g                         = 40.0
