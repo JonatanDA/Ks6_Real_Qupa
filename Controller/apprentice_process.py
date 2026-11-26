@@ -95,6 +95,7 @@ AP_1                 = 1
 
 N_MAX_INTENTOS       = int(shared_config.get_controller_var("N_MAX_INTENTOS", 3))
 intentos_redundantes = N_MAX_INTENTOS
+ENABLE_RANDOM_WALK   = bool(shared_config.get_controller_var("ENABLE_RANDOM_WALK", False))
 TIEMPO_RW_SEG        = float(shared_config.get_controller_var("TIEMPO_RW_SEG", 30))
 TIEMPO_RW_TICKS      = int(TIEMPO_RW_SEG * ticks_per_second)
 rw_timer             = 0
@@ -104,7 +105,7 @@ current_patience     = MAX_PATIENCE
 master_tracking      = {}
 srt_anterior_data    = {}
 
-ENABLE_ACTIVE_LEARNING               = False
+ENABLE_ACTIVE_LEARNING               = True
 is_master                            = 0
 Print_tracker_python                 = None
 Print_tracker_paciencia              = None
@@ -131,7 +132,7 @@ def apply_injected_vars(vars_dict: dict):
     únicamente las variables explícitamente recibidas en `--vars` (vars_dict).
     """
     global speed_dem, speed_dem_g, MAX_PATIENCE, BASE_RESTORE, TIEMPO_RW_SEG, TIEMPO_RW_TICKS, current_patience
-    global PATIENCE_LVL2_MULTIPLIER, DECAY_RATES, N_MAX_INTENTOS, intentos_redundantes
+    global PATIENCE_LVL2_MULTIPLIER, DECAY_RATES, ENABLE_RANDOM_WALK, N_MAX_INTENTOS, intentos_redundantes
     global ENABLE_ACTIVE_LEARNING
 
     this_mod = sys.modules[__name__]
@@ -143,6 +144,8 @@ def apply_injected_vars(vars_dict: dict):
             DECAY_RATES = dict(getattr(ctrl_mod, "DECAY_RATES"))
         if hasattr(ctrl_mod, "PATIENCE_LVL2_MULTIPLIER"):
             PATIENCE_LVL2_MULTIPLIER = float(getattr(ctrl_mod, "PATIENCE_LVL2_MULTIPLIER"))
+        if hasattr(ctrl_mod, "ENABLE_RANDOM_WALK"):
+            ENABLE_RANDOM_WALK = bool(getattr(ctrl_mod, "ENABLE_RANDOM_WALK"))
         if hasattr(ctrl_mod, "TIEMPO_RW_SEG"):
             TIEMPO_RW_SEG = float(getattr(ctrl_mod, "TIEMPO_RW_SEG"))
         if hasattr(ctrl_mod, "N_MAX_INTENTOS"):
@@ -397,7 +400,7 @@ def check_patience_and_reconstruct(only_decrement=False):
 
                         comportamientos_ciclo.append(nuevo_comportamiento)
 
-            es_fin_fase = (not hay_comportamiento_nuevo) and ((intentos_redundantes - 1) <= 0)
+            es_fin_fase = (N_MAX_INTENTOS <= 0) or ((not hay_comportamiento_nuevo) and ((intentos_redundantes - 1) <= 0))
             if not es_fin_fase and callable(Print_tracker_calidad_imitacion_data) and len(comportamientos_ciclo) > 0:
                 linea_resumen_actualizada = construir_linea_resumen("Qupa4", comportamientos_ciclo)
                 Print_tracker_calidad_imitacion_data(linea_resumen_actualizada, is_master)
@@ -405,7 +408,12 @@ def check_patience_and_reconstruct(only_decrement=False):
             current_winning_ids = {}
 
         # LÓGICA DE REDUCCIÓN DE INTENTOS Y FIN DE CICLO
-        if hay_comportamiento_nuevo:
+        accion_espera = (
+            "Iniciando Random Walk para explorar nuevas áreas."
+            if ENABLE_RANDOM_WALK
+            else f"Esperando quieto {TIEMPO_RW_SEG:g}s antes del siguiente ciclo (Random Walk desactivado)."
+        )
+        if hay_comportamiento_nuevo and N_MAX_INTENTOS > 0:
             if UP_LOG_MODE >= 1 or SRP_LOG_MODE >= 1:
                 log("\n===========================================================")
                 if UP_LOG_MODE == 2 and len(logs_similitud) > 0:
@@ -415,12 +423,13 @@ def check_patience_and_reconstruct(only_decrement=False):
                     log("")
                 log(" [FIN CICLO DE APRENDIZAJE] NUEVO COMPORTAMIENTO GUARDADO")
                 log(" -> Intentos restantes N = " + str(intentos_redundantes))
-                log(" Iniciando Random Walk para explorar nuevas áreas.")
+                log(" " + accion_espera)
                 log("===========================================================\n\n\n")
             c4 = 1
         else:
-            intentos_redundantes = intentos_redundantes - 1
-            if intentos_redundantes > 0:
+            if not hay_comportamiento_nuevo:
+                intentos_redundantes = intentos_redundantes - 1
+            if (not hay_comportamiento_nuevo) and intentos_redundantes > 0:
                 if UP_LOG_MODE >= 1 or SRP_LOG_MODE >= 1:
                     log("\n===========================================================")
                     if UP_LOG_MODE == 2 and len(logs_similitud) > 0:
@@ -433,7 +442,7 @@ def check_patience_and_reconstruct(only_decrement=False):
                         log(" -> Todo era redundante o rechazado. Intentos restantes N = " + str(intentos_redundantes))
                     else:
                         log(" -> Reconstrucción fallida (Pura basura). Intentos restantes N = " + str(intentos_redundantes))
-                    log(" Iniciando Random Walk para buscar mejor perspectiva.")
+                    log(" " + accion_espera)
                     log("===========================================================\n\n\n")
                 c4 = 1
             else:
@@ -444,8 +453,11 @@ def check_patience_and_reconstruct(only_decrement=False):
                             log(msg)
                         log("")
                         log("")
-                    log(" [FIN FASE DE APRENDIZAJE] INTENTOS AGOTADOS (N=0)")
-                    log(" -> Intentos restantes N = " + str(intentos_redundantes))
+                    if N_MAX_INTENTOS <= 0:
+                        log(" [FIN FASE DE APRENDIZAJE] CICLO ÚNICO COMPLETADO (N_MAX_INTENTOS=0)")
+                    else:
+                        log(" [FIN FASE DE APRENDIZAJE] INTENTOS AGOTADOS (N=0)")
+                    log(" -> Intentos restantes N = " + str(max(0, intentos_redundantes)))
                     log("===========================================================")
 
                 log("\n===========================================================")
