@@ -45,8 +45,14 @@ d_speed                             = shared_config.get_controller_var("d_speed"
 g_speed                             = shared_config.get_controller_var("g_speed", 44.46)
 
 distance_treshold                   = shared_config.get_controller_var("distance_treshold", 20)
-MAX_PATIENCE                        = shared_config.get_controller_var("MAX_PATIENCE", 160 * ticks_per_second)
-BASE_RESTORE                        = shared_config.get_controller_var("BASE_RESTORE", 20  * ticks_per_second)
+MAX_PATIENCE                        = shared_config.get_controller_var("MAX_PATIENCE", 60 * ticks_per_second)
+BASE_RESTORE                        = shared_config.get_controller_var("BASE_RESTORE", 12 * ticks_per_second)
+PATIENCE_LVL2_MULTIPLIER            = float(shared_config.get_controller_var("PATIENCE_LVL2_MULTIPLIER", 2.0))
+DECAY_RATES                         = dict(shared_config.get_controller_var("DECAY_RATES", {
+    1: 0.30,  # 30% de pérdida por cada vez que ESE fragmento hace Nivel 1
+    2: 0.25,  # 25% de pérdida por cada vez que ESE fragmento hace Nivel 2
+    3: 0.0,   # 0% de pérdida para Nivel 3 (Totalmente nuevo, restaura full)
+}))
 
 back_threshold                      = shared_config.get_controller_var("back_threshold", 10)
 front_threshold                     = shared_config.get_controller_var("front_threshold", 30)
@@ -87,9 +93,10 @@ parametros_elegidos  = []
 c4                   = 0
 AP_1                 = 1
 
-N_MAX_INTENTOS       = 3
+N_MAX_INTENTOS       = int(shared_config.get_controller_var("N_MAX_INTENTOS", 3))
 intentos_redundantes = N_MAX_INTENTOS
-TIEMPO_RW_TICKS      = 60 * ticks_per_second
+TIEMPO_RW_SEG        = float(shared_config.get_controller_var("TIEMPO_RW_SEG", 30))
+TIEMPO_RW_TICKS      = int(TIEMPO_RW_SEG * ticks_per_second)
 rw_timer             = 0
 K_UMBRAL_SIMILITUD   = 0.85
 
@@ -123,15 +130,27 @@ def apply_injected_vars(vars_dict: dict):
     Sincroniza primero las variables desde Ks6_apprentice_controller y aplica encima
     únicamente las variables explícitamente recibidas en `--vars` (vars_dict).
     """
-    global speed_dem, speed_dem_g, MAX_PATIENCE, BASE_RESTORE, TIEMPO_RW_TICKS, current_patience
+    global speed_dem, speed_dem_g, MAX_PATIENCE, BASE_RESTORE, TIEMPO_RW_SEG, TIEMPO_RW_TICKS, current_patience
+    global PATIENCE_LVL2_MULTIPLIER, DECAY_RATES, N_MAX_INTENTOS, intentos_redundantes
     global ENABLE_ACTIVE_LEARNING
 
     this_mod = sys.modules[__name__]
     ctrl_mod = shared_config.get_active_controller_module()
     shared_config.sync_from_controller(ctrl_mod, extra_targets=[this_mod])
 
+    if ctrl_mod is not None:
+        if hasattr(ctrl_mod, "DECAY_RATES"):
+            DECAY_RATES = dict(getattr(ctrl_mod, "DECAY_RATES"))
+        if hasattr(ctrl_mod, "PATIENCE_LVL2_MULTIPLIER"):
+            PATIENCE_LVL2_MULTIPLIER = float(getattr(ctrl_mod, "PATIENCE_LVL2_MULTIPLIER"))
+        if hasattr(ctrl_mod, "TIEMPO_RW_SEG"):
+            TIEMPO_RW_SEG = float(getattr(ctrl_mod, "TIEMPO_RW_SEG"))
+        if hasattr(ctrl_mod, "N_MAX_INTENTOS"):
+            N_MAX_INTENTOS = int(getattr(ctrl_mod, "N_MAX_INTENTOS"))
+            intentos_redundantes = N_MAX_INTENTOS
+
     if not vars_dict:
-        TIEMPO_RW_TICKS = int(60 * ticks_per_second)
+        TIEMPO_RW_TICKS = int(TIEMPO_RW_SEG * ticks_per_second)
         current_patience = int(MAX_PATIENCE)
         return
 
@@ -181,7 +200,8 @@ def apply_injected_vars(vars_dict: dict):
         if "BASE_RESTORE" not in vars_dict:
             BASE_RESTORE = int(20 * ticks_per_second)
 
-    TIEMPO_RW_TICKS = int(60 * ticks_per_second)
+    TIEMPO_RW_TICKS = int(TIEMPO_RW_SEG * ticks_per_second)
+    intentos_redundantes = int(N_MAX_INTENTOS)
     current_patience = int(MAX_PATIENCE)
 
     if ctrl_mod is not None:
@@ -212,11 +232,7 @@ def ejecutar_limpieza_ciclo():
 # ============================================================================
 # [SECCIÓN 3] GESTIÓN DE PACIENCIA Y RECONSTRUCCIÓN
 # ============================================================================
-DECAY_RATES = {
-    1: 0.15,  # 15% de pérdida por cada vez que ESE fragmento hace Nivel 1
-    2: 0.10,  # 10% de pérdida por cada vez que ESE fragmento hace Nivel 2
-    3: 0.0,   # 0% de pérdida para Nivel 3 (Totalmente nuevo, restaura full)
-}
+# DECAY_RATES y PATIENCE_LVL2_MULTIPLIER se sincronizan desde Ks6_apprentice_controller.py
 
 current_winning_ids = {}
 
@@ -245,7 +261,7 @@ def update_patience(restore_level, data_count, fragment_history_count):
         restore_amount = math.floor(base_efectiva)
 
         if restore_level == 2:
-            restore_amount = restore_amount * 2
+            restore_amount = math.floor(base_efectiva * float(PATIENCE_LVL2_MULTIPLIER))
 
         current_patience = min(MAX_PATIENCE, current_patience + restore_amount)
 

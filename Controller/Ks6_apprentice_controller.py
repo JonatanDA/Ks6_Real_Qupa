@@ -46,9 +46,9 @@ Distribucion_sensores_de_proximidad = [0, -45, 45, -90, 90, 180]
 Num_cantidad_leds                   = 2
 FOOTBOT_INTERWHEEL_DISTANCE         = 8.6
 
-factor_vel                          = 0.7
+factor_vel                          = 0.6
 speed_dem                           = 10.0 * factor_vel
-speed_dem_g                         = 44.0
+speed_dem_g                         = 40.0
 
 d_speed                             = 0.0
 g_speed                             = 44.46
@@ -73,8 +73,18 @@ IMU_TIMEOUT_FACTOR                  = 2.5     # Seguridad: aborta giro tras fact
 IMU_MEASURED_LINEAR_SPEED_CM_S      = 0.0     # cm/s real medido con regla (0.0 → usa speed_dem / d_speed)
 
 distance_treshold                   = 20
-MAX_PATIENCE                        = 120 * ticks_per_second
-BASE_RESTORE                        = 30  * ticks_per_second
+
+# Parámetros completos del modelo de paciencia y exploración (propagados a apprentice_process.py)
+MAX_PATIENCE                        = 45  * ticks_per_second  # Techo de paciencia en ticks (antes 120s)
+BASE_RESTORE                        = 6  * ticks_per_second  # Restauración base Nivel 1 (antes 30s)
+PATIENCE_LVL2_MULTIPLIER            = 2.0                     # Multiplicador de BASE_RESTORE en Nivel 2
+DECAY_RATES = {
+    1: 0.30,  # 30% de pérdida por cada vez que ESE fragmento hace Nivel 1 (antes 0.15)
+    2: 0.25,  # 25% de pérdida por cada vez que ESE fragmento hace Nivel 2 (antes 0.10)
+    3: 0.0,   # 0% de pérdida para Nivel 3 (fragmento nuevo, restaura full)
+}
+TIEMPO_RW_SEG                       = 30                      # Duración del Random Walk en segundos (antes 60s)
+N_MAX_INTENTOS                      = 3                       # Intentos de exploración tras guardar comportamiento
 
 # Métricas del modelo de ActiveLearning
 back_threshold                      = 10
@@ -97,7 +107,7 @@ noise_cfg = {
 
 # Métricas del módulo: Point_Cloud_Segmenter.py y Segment_Parameterizer.py
 seg_cfg = {
-    'distance_treshold'     : 12,
+    'distance_treshold'     : 15,
     'limite_maximo_ventana' : (30) / factor_vel,
     'tamano_subsampling'    : 15,
     'use_subsampling'       : False,
@@ -105,7 +115,7 @@ seg_cfg = {
 
 # Métricas del módulo de reconstrucción: Global_Trajectory_Reconstructor.py y Parameter_Storage.py
 CONFIG = {
-    'TOL_DIST': 12,
+    'TOL_DIST': 15,
     'TOL_ANG' : 15,
 }
 
@@ -877,7 +887,12 @@ Ks6ApprenticeControllerNode = Ks6ApprenticeControllerNode
 def _push_globals_to_process():
     """Propaga las variables globales definidas en Ks6_apprentice_controller hacia los submódulos."""
     shared_config.sync_from_controller(sys.modules[__name__])
-    apprentice_process.TIEMPO_RW_TICKS = int(60 * ticks_per_second)
+    apprentice_process.DECAY_RATES = dict(DECAY_RATES)
+    apprentice_process.PATIENCE_LVL2_MULTIPLIER = float(PATIENCE_LVL2_MULTIPLIER)
+    apprentice_process.TIEMPO_RW_SEG = float(TIEMPO_RW_SEG)
+    apprentice_process.TIEMPO_RW_TICKS = int(TIEMPO_RW_SEG * ticks_per_second)
+    apprentice_process.N_MAX_INTENTOS = int(N_MAX_INTENTOS)
+    apprentice_process.intentos_redundantes = int(N_MAX_INTENTOS)
     apprentice_process.current_patience = int(MAX_PATIENCE)
     apprentice_entries.MAX_WAIT_TICKS = int(2 * ticks_per_second)
 
@@ -887,6 +902,7 @@ def _sync_globals_from_process():
     global Num_cantidad_leds, FOOTBOT_INTERWHEEL_DISTANCE
     global factor_vel, speed_dem, speed_dem_g, d_speed, g_speed
     global distance_treshold, MAX_PATIENCE, BASE_RESTORE
+    global PATIENCE_LVL2_MULTIPLIER, DECAY_RATES, TIEMPO_RW_SEG, N_MAX_INTENTOS
     global back_threshold, front_threshold, max_tracking_distance, porcentaje
     global SRP_LOG_MODE, UP_LOG_MODE, AL_LOG_MODE, DEBUG_EVASION
 
@@ -903,6 +919,10 @@ def _sync_globals_from_process():
     distance_treshold = apprentice_process.distance_treshold
     MAX_PATIENCE = apprentice_process.MAX_PATIENCE
     BASE_RESTORE = apprentice_process.BASE_RESTORE
+    PATIENCE_LVL2_MULTIPLIER = apprentice_process.PATIENCE_LVL2_MULTIPLIER
+    DECAY_RATES = dict(apprentice_process.DECAY_RATES)
+    TIEMPO_RW_SEG = apprentice_process.TIEMPO_RW_SEG
+    N_MAX_INTENTOS = apprentice_process.N_MAX_INTENTOS
     back_threshold = apprentice_process.back_threshold
     front_threshold = apprentice_process.front_threshold
     max_tracking_distance = apprentice_process.max_tracking_distance
