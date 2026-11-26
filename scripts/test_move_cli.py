@@ -176,8 +176,8 @@ def run_cli():
     from Functions import move as Move
     from Functions import utils as Utils
 
-    # Propagar configuración a shared_config antes de usar Move.move()
-    shared_config.set_controller_vars({
+    # Propagar configuración al módulo activo (__main__), shared_config y Move
+    cfg_vars = {
         "ticks_per_second": tps,
         "FOOTBOT_INTERWHEEL_DISTANCE": FOOTBOT_INTERWHEEL_DISTANCE,
         "IMU_GYRO_Z_SIGN": IMU_GYRO_Z_SIGN,
@@ -191,7 +191,15 @@ def run_cli():
         "IMU_TARE_TIMEOUT_S": IMU_TARE_TIMEOUT_S,
         "IMU_TIMEOUT_FACTOR": IMU_TIMEOUT_FACTOR,
         "IMU_MEASURED_LINEAR_SPEED_CM_S": float(args.v_real),
-    })
+    }
+    main_mod = sys.modules[__name__]
+    for _k, _v in cfg_vars.items():
+        setattr(main_mod, _k, _v)
+        setattr(shared_config, _k, _v)
+        if hasattr(Move, _k):
+            setattr(Move, _k, _v)
+    sys.modules["Controller.Ks6_master_controller"] = main_mod
+    shared_config.sync_from_controller(main_mod, extra_targets=[Move])
 
     imu_proc = None
     if AUTO_LAUNCH_IMU and not args.no_imu:
