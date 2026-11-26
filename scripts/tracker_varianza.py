@@ -38,6 +38,7 @@ NOMBRE_BASE             = "Qa"              # Prefijo de la imagen guardada. (Ej
 # --- Identificadores y Filtros ---
 MODO_GRAFICA            = 1                 # 0: Todos los maestros, 1: Solo los del filtro
 FILTRO_MAESTROS         = "None"            # IDs de los maestros a escuchar (ej. "None" o "1,2")
+SEPARAR_CICLOS_MAESTROS = True              # Si True, al reaparecer maestroN en un nuevo ciclo lo renombra a maestroN.2, maestroN.3, etc.
 
 # --- Control de Finalización ---
 DEFAULT_END_PATTERN     = "End_simulation"  # Frase en consola que finaliza la ejecución
@@ -146,7 +147,45 @@ def parse_maestros_arg(s):
         else: names.add(p.lower().replace(" ", ""))
     return names
 
+def _make_maestro_cycle_renamer():
+    """Renombra maestroN -> maestroN.2, maestroN.3, ... cuando reaparece tras completar un ciclo previo."""
+    vision_count = {}
+    has_var = {}
+    last_var_ts = {}
+    max_num_seen = [0]
+    pat = re.compile(r'^maestro(\d+)$')
+
+    def resolve(base_name, dtype, ts):
+        if not SEPARAR_CICLOS_MAESTROS or not base_name:
+            return base_name
+        m = pat.match(base_name)
+        if not m:
+            return base_name
+        num = int(m.group(1))
+        if base_name not in vision_count:
+            vision_count[base_name] = 1
+            has_var[base_name] = False
+
+        if dtype == 'traj':
+            if has_var.get(base_name, False):
+                vision_count[base_name] += 1
+                has_var[base_name] = False
+        elif dtype == 'var':
+            if has_var.get(base_name, False) and (ts - last_var_ts.get(base_name, ts)) > TIEMPO_ESPERA_MAESTRO and max_num_seen[0] >= num:
+                vision_count[base_name] += 1
+            has_var[base_name] = True
+            last_var_ts[base_name] = ts
+
+        if num > max_num_seen[0]:
+            max_num_seen[0] = num
+
+        v = vision_count[base_name]
+        return base_name if v == 1 else f"{base_name}.{v}"
+
+    return resolve
+
 def stdin_reader(q, stop_event, end_pattern, last_time_holder):
+    resolve_name = _make_maestro_cycle_renamer()
     try:
         while True:
             raw = sys.stdin.readline()
@@ -161,6 +200,8 @@ def stdin_reader(q, stop_event, end_pattern, last_time_holder):
             if parsed:
                 category, name, dtype, val1, val2 = parsed
                 ts = time.time()
+                if category == 'maestro':
+                    name = resolve_name(name, dtype, ts)
                 q.put((category, name, dtype, val1, val2, ts))
                 last_time_holder[0] = ts
     except Exception:
@@ -328,7 +369,7 @@ def main():
                     continue
 
                 # Control por Modo de Gráfica (1: Aplica el filtro, 0: Lo ignora)
-                if MODO_GRAFICA == 1 and maestros_filter and name not in maestros_filter:
+                if MODO_GRAFICA == 1 and maestros_filter and (name not in maestros_filter and name.split('.')[0] not in maestros_filter):
                     continue
                 
                 # --- ACUMULACIÓN DE DATOS SEGÚN SU TIPO ---
@@ -429,7 +470,7 @@ def main():
             # Pintar el canvas y guardarlo
             dibujar_canvas(m_name, fig_save, ax_m_save, ax_t1_save, data_m, GUARDAR_IMAGEN, current_subsampling, ax_t2_save)
             
-            match_num = re.search(r'\d+', m_name)
+            match_num = re.search(r'\d+(?:\.\d+)?', m_name)
             sufijo = match_num.group(0) if match_num else m_name
             ruta_imagen = os.path.join(DIRECTORIO_GUARDADO, f"{NOMBRE_BASE}{sufijo}.png")
             
