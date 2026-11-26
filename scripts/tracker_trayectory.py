@@ -47,7 +47,6 @@ NOMBRE_OBSERVADOR               = "Ra"  # Nombre mostrado para el robot observad
 MAX_ETIQUETAS_FIJAS             = 7     # Máximo número de etiquetas fijas; None = sin límite
 ELIMINAR_SUPERPUESTAS           = False # Evita etiquetas superpuestas: True/False
 MAX_HISTORICAS_TRANSPARENTES    = 3     # Cantidad máxima de posiciones históricas etiquetadas
-SEPARAR_CICLOS_MAESTROS         = True  # Si True, al reaparecer un MasterN tras finalizar/reiniciar ciclo, lo renombra como MasterN.2, MasterN.3, etc.
 
 # Listas y reglas de nombres configurables
 PALABRAS_IGNORADAS       = []          # Palabras al inicio del nombre que hacen que se ignore el robot
@@ -266,49 +265,10 @@ def get_formatted_title(base_title, sim_time, ticks_per_sec):
     else:
         return f"{base_title} | Tiempo: {sim_time:.2f}s"
 
-def _make_cycle_renamer():
-    """Renombra MasterN -> MasterN.2, MasterN.3, ... cuando reaparece tras desaparecer o iniciar un nuevo ciclo."""
-    vision_count = {}
-    last_ts = {}
-    max_num_by_prefix = {}
-    pat = re.compile(r'^([a-zA-Z]+)(\d+)$')
-
-    def resolve(name, sim_ts):
-        if not SEPARAR_CICLOS_MAESTROS:
-            return name
-        if name == OBSERVADOR_ID or name in TRAYECTORIAS_PERMANENTES:
-            return name
-        m = pat.match(name)
-        if not m:
-            return name
-        prefix_raw, num_str = m.group(1), m.group(2)
-        prefix_low = prefix_raw.lower()
-        if PREFIJOS_NORMALIZABLES and not any(prefix_low == p.lower() for p in PREFIJOS_NORMALIZABLES):
-            return name
-
-        num = int(num_str)
-        prev_ts = last_ts.get(name)
-        prev_max = max_num_by_prefix.get(prefix_low, 0)
-
-        if prev_ts is None:
-            vision_count[name] = 1
-        elif (sim_ts - prev_ts) > DEAD_TIME_LIMIT and (prev_max >= num):
-            vision_count[name] = vision_count.get(name, 1) + 1
-
-        last_ts[name] = sim_ts
-        if num > prev_max:
-            max_num_by_prefix[prefix_low] = num
-
-        v = vision_count[name]
-        return name if v == 1 else f"{name}.{v}"
-
-    return resolve
-
 def stdin_reader(q, timeline, stop_event, end_pattern, last_time_holder):
     current_tick = []
     first_timer_seen = False
     tick_counter = 0
-    resolve_name = _make_cycle_renamer()
 
     try:
         while True:
@@ -346,8 +306,6 @@ def stdin_reader(q, timeline, stop_event, end_pattern, last_time_holder):
                 category, name, val1, val2, extra_data = parsed
                 real_ts = time.time()
                 sim_pseudo_ts = tick_counter / float(SIM_TICKS_PER_SEC)
-                if category == 'robot':
-                    name = resolve_name(name, sim_pseudo_ts)
                 
                 q.put((category, name, val1, val2, sim_pseudo_ts, extra_data))
 
@@ -370,7 +328,7 @@ def iso(ts):
 def get_display_name(name):
     if name == OBSERVADOR_ID and NOMBRE_OBSERVADOR != "": return NOMBRE_OBSERVADOR
     if PREFIJOS_NORMALIZABLES:
-        match_norm = re.match(r'^([a-zA-Z]+)(\d+(?:\.\d+)?)$', name)
+        match_norm = re.match(r'^([a-zA-Z]+)(\d+)$', name)
         if match_norm:
             prefix_found = match_norm.group(1).lower()
             num_found = match_norm.group(2)
@@ -527,7 +485,7 @@ def main():
                     if name not in first_pos_dict: continue
                     if name == OBSERVADOR_ID and MODO_VISUAL_OBSERVADOR == 0: continue
                     if MAX_ETIQUETAS_FIJAS is not None and name != OBSERVADOR_ID:
-                        match = re.search(r'(\d+)(?:\.\d+)?$', name)
+                        match = re.search(r'(\d+)$', name)
                         if match and int(match.group(1)) > MAX_ETIQUETAS_FIJAS: continue
                     x_val, y_val = first_pos_dict[name]
                     display_name, color = get_display_name(name), get_color(i) if is_video else name_to_color.get(name, get_color(i))
