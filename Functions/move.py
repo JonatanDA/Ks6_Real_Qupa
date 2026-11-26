@@ -5,7 +5,7 @@
 #   move, r_move, redondear_resolucion, RandomWalking, navegar_a_coordenadas, Save_position y update_imu.
 #   - Fase 1 (c1 == 0): Giro en lazo cerrado con giroscopio del MPU6050 (/{robot_id}/mpu6050/imu/data_raw),
 #     zona lenta, frenado anticipado adaptativo (adaptive_early_stop) y re-encerado opcional por vértice.
-#   - Fase 2 (c1 == 1): Avance lineal por tiempo calibrable (measured_linear_speed o speed_d),
+#   - Fase 2 (c1 == 1): Avance lineal por tiempo calibrable (v_real / IMU_MEASURED_LINEAR_SPEED_CM_S o speed_d),
 #     integrando (rob.x, rob.y) con el yaw real del giroscopio cuando no hay /odom.
 #   Mantiene idéntica firma de entrada y salidas por tick:
 #     move(rob, distance, target_angle, speed_d, speed_g, timer=1, stop=False)
@@ -24,6 +24,18 @@ try:
     from std_srvs.srv import Trigger as _StdTrigger
 except ImportError:
     _StdTrigger = None
+
+
+# ============================================================================
+# CALIBRACIÓN DE VELOCIDAD LINEAL REAL (v_real)
+# ============================================================================
+# Velocidad lineal real medida con regla en el robot físico [cm/s].
+#   - Valor > 0.0 : se usa para calcular el tiempo de avance (t = distancia / v_real)
+#                   cuando el controlador tiene IMU_MEASURED_LINEAR_SPEED_CM_S = 0.0.
+#   - Valor = 0.0 : usa directamente la velocidad pedida (speed_d).
+# Calibración qupa_48 @ vel_lin = 7.0 cm/s (0.07 m/s), batería ~7.7V:
+#   promedio 65.67 cm en 4.286 s nominales -> 15.3 cm/s.
+v_real = 15.3
 
 
 # ============================================================================
@@ -48,7 +60,7 @@ IMU_TURN_PAUSE_S               = 0.5     # s quieto tras frenar el giro (solo si
 IMU_SETTLE_S                   = 0.3     # s de estabilización tras cada tare (solo si IMU_RETARE_EACH_SEGMENT=True)
 IMU_TARE_TIMEOUT_S             = 5.0     # s máximo de espera al servicio /tare
 IMU_TIMEOUT_FACTOR             = 2.5     # seguridad: corta un giro tras factor × tiempo esperado
-IMU_MEASURED_LINEAR_SPEED_CM_S = 0.0     # cm/s real medido con regla (0.0 → usa speed_d)
+IMU_MEASURED_LINEAR_SPEED_CM_S = v_real  # respaldo sincronizado con v_real
 
 
 def _get_max_linear_cm_s() -> float:
@@ -270,8 +282,9 @@ def move(
       (controlado por `IMU_RETARE_EACH_SEGMENT`). Si `IMU_RETARE_EACH_SEGMENT` es False,
       no realiza tare ni pausas adicionales dentro de `move()`.
       Reporta en cada tick `rob.move_angle` (rad) medido por el giroscopio.
-    - Fase 2 (c1 == 1): Avanza por tiempo usando `IMU_MEASURED_LINEAR_SPEED_CM_S` (o `speed_d`),
-      reportando en cada tick `rob.move_distance` (cm) e integrando (rob.x, rob.y) con `rob.yaw` real.
+    - Fase 2 (c1 == 1): Avanza por tiempo usando `v_real` / `IMU_MEASURED_LINEAR_SPEED_CM_S`
+      (o `speed_d`), reportando en cada tick `rob.move_distance` (cm) e integrando
+      (rob.x, rob.y) con `rob.yaw` real.
     """
     global c1, c2, move_controller, move_distance, move_angle
     global ticks_needed, actual_dis_ticks, angle_ticks_needed, actual_ang_ticks
@@ -336,7 +349,18 @@ def move(
     settle_s       = float(shared_config.get_controller_var("IMU_SETTLE_S", IMU_SETTLE_S))
     tare_timeout_s = float(shared_config.get_controller_var("IMU_TARE_TIMEOUT_S", IMU_TARE_TIMEOUT_S))
     timeout_factor = float(shared_config.get_controller_var("IMU_TIMEOUT_FACTOR", IMU_TIMEOUT_FACTOR))
-    measured_v_cm  = float(shared_config.get_controller_var("IMU_MEASURED_LINEAR_SPEED_CM_S", IMU_MEASURED_LINEAR_SPEED_CM_S))
+
+    # Prioridad de calibración lineal:
+    # 1) IMU_MEASURED_LINEAR_SPEED_CM_S > 0.0 si el controlador/CLI lo sobreescribe explícitamente
+    # 2) v_real > 0.0 definido al inicio de este archivo Functions/move.py
+    # 3) 0.0 -> usa directamente speed_d
+    ctrl_measured_v = float(shared_config.get_controller_var("IMU_MEASURED_LINEAR_SPEED_CM_S", 0.0))
+    if ctrl_measured_v > 0.0:
+        measured_v_cm = ctrl_measured_v
+    elif float(v_real) > 0.0:
+        measured_v_cm = float(v_real)
+    else:
+        measured_v_cm = 0.0
 
     if not hasattr(rob, 'elapsed_ang_s'):
         rob.elapsed_ang_s = 0.0

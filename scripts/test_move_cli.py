@@ -2,22 +2,28 @@
 # Archivo: scripts/test_move_cli.py
 # Ubicación: ~/sim_ws_qupa/Ks6_Real_Qupa/scripts/test_move_cli.py
 # Descripción:
-#   Herramienta interactiva de calibración y prueba para Functions/move.py en Qupa físico real.
-#   - T1: ros2 launch qupa_hardware hardware.launch.py namespace:=qupa_D2
-#   - T2: python3 scripts/test_move_cli.py --id D2
+#   Herramienta interactiva de calibración y ejecución de secuencias para Functions/move.py en Qupa físico real.
+#   Usa directamente Functions/move.py (el mismo módulo de los experimentos).
+#   - T1: ros2 launch qupa_hardware hardware.launch.py namespace:=qupa_48
+#   - T2: python3 scripts/test_move_cli.py --id 48
 #   - Espera OBLIGATORIAMENTE confirmación de la IMU antes de aceptar comandos.
-#   - Entrada esperada: ang,dis,vel_ang,vel_lin
-#       Ejemplo: 90,30,40,5   (ángulo=90°, distancia=30 cm, vel_ang=40 °/s, vel_lin=5 cm/s)
-#       Nota: se convierte internamente al orden de Move.move(dist, ang, speed_d, speed_g).
+#   - Entrada esperada:
+#       (ang1,dis1),(ang2,dis2),...,(ang_i,dis_i), vel_ang, vel_lin, n
+#       Ejemplo (triángulo repetido 2 veces):
+#         (120,25),(120,25),(120,25), 44,7,2
+#       Ejemplo (un solo segmento, 1 vez):
+#         (90,30), 44,7,1
+#       Nota: cada par (ang,dis) se convierte internamente a Move.move(dis, ang, vel_lin, vel_ang).
 #   - Controles en el prompt:
-#       ang,dis,vel_ang,vel_lin -> ejecuta el movimiento
-#       R                       -> repite el último comando
-#       T                       -> ejecuta /tare manual en la IMU
-#       N o Ctrl+C              -> frena motores y cierra limpiamente
+#       secuencia -> ejecuta los segmentos n veces
+#       R         -> repite la última secuencia
+#       T         -> ejecuta /tare manual en la IMU
+#       N o Ctrl+C -> frena motores y cierra limpiamente
 
 import argparse
 import math
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -34,7 +40,7 @@ for _p in (_PROJECT_ROOT, os.path.join(_PROJECT_ROOT, "Controller"), os.path.joi
 # ============================================================================
 #                      VARIABLES CONFIGURABLES DE CALIBRACIÓN
 # ============================================================================
-DEFAULT_ROBOT_ID               = "qupa_D2"
+DEFAULT_ROBOT_ID               = "qupa_48"
 TICKS_PER_SECOND               = 8        # 8 Hz recomendado en físico (dt=0.125s < 0.3s watchdog)
 FOOTBOT_INTERWHEEL_DISTANCE    = 8.6      # cm (wheel_base = 0.086 m)
 
@@ -48,49 +54,86 @@ IMU_TOPIC_SUFFIX               = "mpu6050/imu/data_raw"
 IMU_TARE_SERVICE_SUFFIX        = "mpu6050/tare"
 WAIT_AFTER_IMU_SEC             = 4.0
 
-IMU_GYRO_Z_SIGN                = 1.0      # -1.0 si el eje Z apunta abajo; usar --gyro_scale si hay factor 2x
-IMU_GYRO_SCALE                 = 1.0      # Factor de escala del giroscopio (ej. 0.5 si al girar 90° reporta 180°)
+IMU_GYRO_Z_SIGN                = 1.0      # -1.0 si el eje Z apunta abajo
+IMU_GYRO_SCALE                 = 1.0      # Factor de escala del giroscopio Z (default 1.0)
 IMU_ANGULAR_SPEED_SLOW_RAD_S   = 0.72     # rad/s en zona lenta (> 0.70 rad/s deadband físico)
 IMU_TURN_SLOW_ZONE_DEG         = 30.0     # ° finales a velocidad lenta
 IMU_TURN_EARLY_STOP_DEG        = 15.0     # ° iniciales antes de la meta para frenar por inercia
 IMU_ADAPTIVE_EARLY_STOP        = True     # Ajusta early_stop con el sobrepaso medido
 IMU_RETARE_EACH_SEGMENT        = True     # True: re-encera ANTES de cada giro dentro de Move.move()
-TARE_ON_FINISH                 = True     # True: ejecuta /tare al FINALIZAR cada movimiento
+TARE_ON_FINISH                 = True     # True: ejecuta /tare al FINALIZAR toda la secuencia
 IMU_TURN_PAUSE_S               = 0.5      # s de pausa de frenado tras cada giro
 IMU_SETTLE_S                   = 0.3      # s tras el tare antes de girar
 IMU_TARE_TIMEOUT_S             = 5.0      # s máximo de espera al servicio /tare
 IMU_TIMEOUT_FACTOR             = 2.5      # Seguridad: aborta giro tras factor * tiempo esperado
-IMU_MEASURED_LINEAR_SPEED_CM_S = 0.0      # cm/s real medido con regla (0.0 -> usa vel_lineal pedida)
 
 # ============================================================================
 #                            PARSER DE ENTRADA CLI
 # ============================================================================
-def parse_move_command(raw_text: str):
+_PAIR_RE = re.compile(r"\(\s*([^(),]+?)\s*,\s*([^(),]+?)\s*\)")
+
+
+def parse_sequence_command(raw_text: str):
     """
     Parsea una entrada con formato:
-      ang,dis,vel_ang,vel_lin
+      (ang1,dis1),(ang2,dis2),...,(ang_i,dis_i), vel_ang, vel_lin, n
     Ejemplo:
-      90,30,40,5
+      (120,25),(120,25),(120,25), 44,7,2
     Retorna:
-      (ang_deg, dist_cm, speed_g_deg_s, speed_d_cm_s)
+      (segments, speed_g_deg_s, speed_d_cm_s, repetitions)
+      donde segments = [(ang1, dis1), (ang2, dis2), ...]
     """
-    parts = [p.strip() for p in raw_text.strip().split(",")]
-    if len(parts) != 4 or any(p == "" for p in parts):
+    text = raw_text.strip()
+    matches = list(_PAIR_RE.finditer(text))
+    if not matches:
         raise ValueError(
-            "Formato inválido. Usa exactamente 4 valores separados por comas: ang,dis,vel_ang,vel_lin\n"
-            "Ejemplo: 90,30,40,5"
+            "Formato inválido. Usa: (ang1,dis1),(ang2,dis2),..., vel_ang, vel_lin, n\n"
+            "Ejemplo: (120,25),(120,25),(120,25), 44,7,2"
         )
+
+    # Verificar que entre pares solo haya comas y espacios (sin texto suelto)
+    last_end = 0
+    segments = []
+    for idx, m in enumerate(matches):
+        between = text[last_end:m.start()].strip()
+        if idx == 0:
+            if between != "":
+                raise ValueError(f"Texto inesperado antes del primer segmento: '{between}'")
+        else:
+            if between not in (",", ""):
+                raise ValueError(f"Separador inválido entre segmentos: '{between}' (usa comas).")
+        try:
+            ang_deg = float(m.group(1))
+            dist_cm = float(m.group(2))
+        except ValueError:
+            raise ValueError(f"Segmento inválido '{m.group(0)}': ángulo y distancia deben ser numéricos.")
+        segments.append((ang_deg, dist_cm))
+        last_end = m.end()
+
+    tail = text[last_end:].strip()
+    if tail.startswith(","):
+        tail = tail[1:].strip()
+
+    tail_parts = [p.strip() for p in tail.split(",") if p.strip() != ""]
+    if len(tail_parts) != 3:
+        raise ValueError(
+            "Después de los segmentos deben ir exactamente 3 valores: vel_ang, vel_lin, n\n"
+            "Ejemplo: (90,30),(90,20), 44,7,2"
+        )
+
     try:
-        ang_deg = float(parts[0])
-        dist_cm = float(parts[1])
-        speed_g = float(parts[2])
-        speed_d = float(parts[3])
-    except ValueError:
+        speed_g = float(tail_parts[0])
+        speed_d = float(tail_parts[1])
+        reps_f = float(tail_parts[2])
+        if not reps_f.is_integer() or int(reps_f) < 1:
+            raise ValueError("El número de repeticiones 'n' debe ser un entero >= 1.")
+        repetitions = int(reps_f)
+    except ValueError as exc:
         raise ValueError(
-            "Todos los valores deben ser numéricos: ang,dis,vel_ang,vel_lin\n"
-            "Ejemplo: 90,30,40,5"
+            f"Valores finales inválidos ({tail}): usa vel_ang, vel_lin, n (n entero >= 1). Detalle: {exc}"
         )
-    return ang_deg, dist_cm, speed_g, speed_d
+
+    return segments, speed_g, speed_d, repetitions
 
 
 def normalize_robot_id(raw_id: str) -> str:
@@ -145,13 +188,20 @@ def stop_process_group(proc):
 #                        NODO ROS 2 DE PRUEBA DE MOVE()
 # ============================================================================
 def run_cli():
-    parser = argparse.ArgumentParser(description="CLI interactivo para calibrar Functions/move.py en Qupa real")
+    parser = argparse.ArgumentParser(
+        description="CLI interactivo de secuencias repetibles para Functions/move.py en Qupa real"
+    )
     parser.add_argument("--id", type=str, default=DEFAULT_ROBOT_ID, help=f"ID/namespace del robot (default: {DEFAULT_ROBOT_ID})")
     parser.add_argument("--tps", type=int, default=TICKS_PER_SECOND, help=f"Ticks por segundo (default: {TICKS_PER_SECOND})")
-    parser.add_argument("--v_real", type=float, default=IMU_MEASURED_LINEAR_SPEED_CM_S, help="Velocidad lineal real medida en cm/s (0.0 = usa la pedida)")
-    parser.add_argument("--gyro_scale", type=float, default=IMU_GYRO_SCALE, help=f"Factor de escala del giroscopio Z (default: {IMU_GYRO_SCALE}; ej. 0.5 si reporta el doble)")
-    parser.add_argument("--tare_on_finish", action="store_true", default=TARE_ON_FINISH, help="Ejecutar /tare al finalizar cada movimiento")
-    parser.add_argument("--no_tare_on_finish", action="store_true", help="Desactivar /tare al finalizar cada movimiento")
+    parser.add_argument(
+        "--v_real",
+        type=float,
+        default=None,
+        help="Sobreescribe Move.v_real en cm/s (si se omite, usa v_real definido al inicio de Functions/move.py; 0 desactiva calibración)",
+    )
+    parser.add_argument("--gyro_scale", type=float, default=IMU_GYRO_SCALE, help=f"Factor de escala del giroscopio Z (default: {IMU_GYRO_SCALE})")
+    parser.add_argument("--tare_on_finish", action="store_true", default=TARE_ON_FINISH, help="Ejecutar /tare al finalizar toda la secuencia")
+    parser.add_argument("--no_tare_on_finish", action="store_true", help="Desactivar /tare al finalizar toda la secuencia")
     parser.add_argument("--no_retare_start", action="store_true", help="Desactivar el /tare automático al iniciar cada giro en Move.move()")
     parser.add_argument("--no_imu", action="store_true", help="No lanzar el driver mpu6050 automáticamente")
     args = parser.parse_args()
@@ -175,6 +225,16 @@ def run_cli():
     from Functions import move as Move
     from Functions import utils as Utils
 
+    # Si el usuario pasó --v_real explícitamente por CLI, sobreescribir Move.v_real;
+    # si no, respetar el v_real definido al inicio de Functions/move.py.
+    if args.v_real is not None:
+        active_v_real = float(args.v_real)
+        Move.v_real = active_v_real
+        v_real_source = "CLI --v_real"
+    else:
+        active_v_real = float(getattr(Move, "v_real", 0.0))
+        v_real_source = "Functions/move.py (v_real)"
+
     # Propagar configuración al módulo activo (__main__), shared_config y Move
     cfg_vars = {
         "ticks_per_second": tps,
@@ -189,7 +249,7 @@ def run_cli():
         "IMU_SETTLE_S": IMU_SETTLE_S,
         "IMU_TARE_TIMEOUT_S": IMU_TARE_TIMEOUT_S,
         "IMU_TIMEOUT_FACTOR": IMU_TIMEOUT_FACTOR,
-        "IMU_MEASURED_LINEAR_SPEED_CM_S": float(args.v_real),
+        "IMU_MEASURED_LINEAR_SPEED_CM_S": active_v_real,
     }
     main_mod = sys.modules[__name__]
     for _k, _v in cfg_vars.items():
@@ -293,9 +353,9 @@ def run_cli():
     spin_thread.start()
 
     print("\n===========================================================")
-    print(f" CALIBRADOR INTERACTIVO DE Move.move() -> {robot_id}")
+    print(f" EJECUTOR DE SECUENCIAS DE Move.move() -> {robot_id}")
     print("===========================================================")
-    print(f" Ticks/seg: {tps} Hz (dt={dt:.3f}s) | v_real_calibrada: {args.v_real:.2f} cm/s")
+    print(f" Ticks/seg: {tps} Hz (dt={dt:.3f}s) | v_real: {active_v_real:.2f} cm/s [{v_real_source}]")
     print(f" Escala gyro Z: {effective_gyro_sign:+.3f} | tare_inicio={retare_each} | tare_fin={tare_on_finish}")
     print(f" Tópico cmd_vel: /{robot_id}/cmd_vel")
     print(f" Tópico IMU:     /{robot_id}/{IMU_TOPIC_SUFFIX}")
@@ -330,9 +390,9 @@ def run_cli():
         )
 
         print("\nFormato de entrada:")
-        print("  ang,dis,vel_ang,vel_lin")
-        print("  Ejemplo: 90,30,40,5  (90°, 30 cm, 40 °/s, 5 cm/s)")
-        print("  Comandos: R = repetir último | T = tare manual | N o Ctrl+C = salir\n")
+        print("  (ang1,dis1),(ang2,dis2),...,(ang_i,dis_i), vel_ang, vel_lin, n")
+        print("  Ejemplo: (120,25),(120,25),(120,25), 44,7,2")
+        print("  Comandos: R = repetir última secuencia | T = tare manual | N o Ctrl+C = salir\n")
 
         while True:
             try:
@@ -355,102 +415,129 @@ def run_cli():
 
             if upper == "R":
                 if last_command is None:
-                    print("[AVISO] Aún no hay ningún comando previo para repetir.")
+                    print("[AVISO] Aún no hay ninguna secuencia previa para repetir.")
                     continue
-                ang_deg, dist_cm, speed_g, speed_d = last_command
+                segments, speed_g, speed_d, repetitions = last_command
+                seg_str = ", ".join(f"({a:g},{d:g})" for a, d in segments)
                 print(
-                    f"[CLI] Repitiendo último comando: ang={ang_deg}°, dis={dist_cm} cm, "
-                    f"vel_ang={speed_g} °/s, vel_lin={speed_d} cm/s"
+                    f"[CLI] Repitiendo última secuencia: {seg_str} | "
+                    f"vel_ang={speed_g:g} °/s, vel_lin={speed_d:g} cm/s, n={repetitions}"
                 )
             else:
                 try:
-                    ang_deg, dist_cm, speed_g, speed_d = parse_move_command(user_in)
-                    last_command = (ang_deg, dist_cm, speed_g, speed_d)
+                    segments, speed_g, speed_d, repetitions = parse_sequence_command(user_in)
+                    last_command = (segments, speed_g, speed_d, repetitions)
                 except ValueError as err:
                     print(f"[ERROR] {err}")
                     continue
 
-            Move.r_move(node.rob)
-            node.rob.c1 = 0
-            node.rob.c2 = 0
-            seg_t0 = time.monotonic()
-            all_v_samples = []
-            all_w_samples = []
-
+            seq_t0 = time.monotonic()
+            total_segs = len(segments)
             print(
-                f"\n[EJECUTANDO] Objetivo -> ang={ang_deg:+.2f}°, dis={dist_cm:.2f} cm | "
-                f"vel_ang={speed_g:.2f} °/s, vel_lin={speed_d:.2f} cm/s"
-            )
-            print(
-                "  tick | fase        | ang_rec(°) | dist_rec(cm) | avg_v(m/s) | avg_w(rad/s) | n_cmd | imu_yaw(°)"
-            )
-            print(
-                "  -----+-------------+------------+--------------+------------+--------------+-------+-----------"
+                f"\n[SECUENCIA] {total_segs} segmento(s) x {repetitions} repetición(es) | "
+                f"vel_ang={speed_g:.2f} °/s, vel_lin={speed_d:.2f} cm/s, v_real={active_v_real:.2f} cm/s",
+                flush=True,
             )
 
-            seg_tick = 0
-            while node.rob.c1 != 2:
-                tick_start = time.monotonic()
-                global_tick += 1
-                seg_tick += 1
+            for rep_idx in range(1, repetitions + 1):
+                rep_t0 = time.monotonic()
+                print(f"\n==================== REPETICIÓN {rep_idx}/{repetitions} ====================", flush=True)
 
-                node.clear_tick_cmd_samples()
+                for seg_idx, (ang_deg, dist_cm) in enumerate(segments, start=1):
+                    Move.r_move(node.rob)
+                    node.rob.c1 = 0
+                    node.rob.c2 = 0
+                    seg_t0 = time.monotonic()
+                    all_v_samples = []
+                    all_w_samples = []
 
-                # Orden de Move.move: (rob, distance, target_angle, speed_d, speed_g, timer, stop)
-                c2_out, c1_out, moved_dist, moved_ang_rad = Move.move(
-                    node.rob,
-                    dist_cm,
-                    ang_deg,
-                    speed_d,
-                    speed_g,
-                    global_tick,
-                    False,
-                )
-                node.publish_cmd(node.rob.cmd_linear_x, node.rob.cmd_angular_z)
+                    print(
+                        f"\n[REP {rep_idx}/{repetitions} | SEG {seg_idx}/{total_segs}] "
+                        f"Objetivo -> ang={ang_deg:+.2f}°, dis={dist_cm:.2f} cm | "
+                        f"vel_ang={speed_g:.2f} °/s, vel_lin={speed_d:.2f} cm/s",
+                        flush=True,
+                    )
+                    print(
+                        "  tick | fase        | ang_rec(°) | dist_rec(cm) | avg_v(m/s) | avg_w(rad/s) | n_cmd | imu_yaw(°)"
+                    )
+                    print(
+                        "  -----+-------------+------------+--------------+------------+--------------+-------+-----------"
+                    )
 
-                # Esperar el resto del tick para capturar todos los mensajes de /cmd_vel en este tick
-                elapsed_tick = time.monotonic() - tick_start
-                sleep_s = dt - elapsed_tick
-                if sleep_s > 0.0:
-                    time.sleep(sleep_s)
+                    seg_tick = 0
+                    while node.rob.c1 != 2:
+                        tick_start = time.monotonic()
+                        global_tick += 1
+                        seg_tick += 1
 
-                avg_v, avg_w, n_cmd = node.consume_tick_cmd_averages()
-                if n_cmd > 0:
-                    all_v_samples.append(avg_v)
-                    all_w_samples.append(avg_w)
+                        node.clear_tick_cmd_samples()
 
-                if c1_out == 0:
-                    fase = f"GIRO:{getattr(node.rob, 'imu_turn_substate', 'TURN')}"
-                elif c1_out == 1:
-                    fase = "AVANCE"
-                else:
-                    fase = "FIN"
+                        # Orden de Move.move: (rob, distance, target_angle, speed_d, speed_g, timer, stop)
+                        c2_out, c1_out, moved_dist, moved_ang_rad = Move.move(
+                            node.rob,
+                            dist_cm,
+                            ang_deg,
+                            speed_d,
+                            speed_g,
+                            global_tick,
+                            False,
+                        )
+                        node.publish_cmd(node.rob.cmd_linear_x, node.rob.cmd_angular_z)
 
-                moved_ang_deg = math.degrees(moved_ang_rad)
-                imu_yaw_deg = math.degrees(float(getattr(node.rob, "imu_yaw", 0.0)))
+                        elapsed_tick = time.monotonic() - tick_start
+                        sleep_s = dt - elapsed_tick
+                        if sleep_s > 0.0:
+                            time.sleep(sleep_s)
+
+                        avg_v, avg_w, n_cmd = node.consume_tick_cmd_averages()
+                        if n_cmd > 0:
+                            all_v_samples.append(avg_v)
+                            all_w_samples.append(avg_w)
+
+                        if c1_out == 0:
+                            fase = f"GIRO:{getattr(node.rob, 'imu_turn_substate', 'TURN')}"
+                        elif c1_out == 1:
+                            fase = "AVANCE"
+                        else:
+                            fase = "FIN"
+
+                        moved_ang_deg = math.degrees(moved_ang_rad)
+                        imu_yaw_deg = math.degrees(float(getattr(node.rob, "imu_yaw", 0.0)))
+                        print(
+                            f"  {seg_tick:4d} | {fase:<11s} | {moved_ang_deg:+10.2f} | {moved_dist:12.2f} | "
+                            f"{avg_v:+10.4f} | {avg_w:+12.4f} | {n_cmd:5d} | {imu_yaw_deg:+9.2f}",
+                            flush=True,
+                        )
+
+                    node.stop_motors()
+                    seg_dur = time.monotonic() - seg_t0
+                    seg_avg_v = (sum(all_v_samples) / len(all_v_samples)) if all_v_samples else 0.0
+                    seg_avg_w = (sum(all_w_samples) / len(all_w_samples)) if all_w_samples else 0.0
+                    print(
+                        f"[FIN SEG {seg_idx}/{total_segs}] Tiempo={seg_dur:.2f}s | "
+                        f"Objetivo=({ang_deg:+.2f}°, {dist_cm:.2f} cm) | "
+                        f"Reportado=({math.degrees(node.rob.move_angle):+.2f}°, {node.rob.move_distance:.2f} cm) | "
+                        f"Prom /cmd_vel: v={seg_avg_v:+.4f} m/s, w={seg_avg_w:+.4f} rad/s",
+                        flush=True,
+                    )
+
                 print(
-                    f"  {seg_tick:4d} | {fase:<11s} | {moved_ang_deg:+10.2f} | {moved_dist:12.2f} | "
-                    f"{avg_v:+10.4f} | {avg_w:+12.4f} | {n_cmd:5d} | {imu_yaw_deg:+9.2f}",
+                    f"[FIN REP {rep_idx}/{repetitions}] Duración repetición={time.monotonic() - rep_t0:.2f}s",
                     flush=True,
                 )
 
             node.stop_motors()
-            seg_dur = time.monotonic() - seg_t0
-            seg_avg_v = (sum(all_v_samples) / len(all_v_samples)) if all_v_samples else 0.0
-            seg_avg_w = (sum(all_w_samples) / len(all_w_samples)) if all_w_samples else 0.0
             print(
-                f"\n[FIN] Tiempo={seg_dur:.2f}s | "
-                f"Objetivo=({ang_deg:+.2f}°, {dist_cm:.2f} cm) | "
-                f"Reportado=({math.degrees(node.rob.move_angle):+.2f}°, {node.rob.move_distance:.2f} cm) | "
-                f"Prom /cmd_vel: v={seg_avg_v:+.4f} m/s, w={seg_avg_w:+.4f} rad/s",
+                f"\n[FIN SECUENCIA] {repetitions} repetición(es) ({total_segs * repetitions} segmentos) "
+                f"completadas en {time.monotonic() - seq_t0:.2f}s.",
                 flush=True,
             )
 
             if tare_on_finish:
                 time.sleep(0.3)
-                node.call_tare("fin de movimiento")
+                node.call_tare("fin de secuencia")
 
-            print("\n--- Ingresa otro comando (ang,dis,vel_ang,vel_lin), 'R' repetir, 'T' tare o 'N' salir. ---\n")
+            print("\n--- Ingresa otra secuencia, 'R' repetir, 'T' tare o 'N' salir. ---\n")
 
     except KeyboardInterrupt:
         print("\n[CLI] Interrumpido por Ctrl+C.")
