@@ -210,9 +210,9 @@ def original_params(figura: str, distance_factor: float = 1.0) -> dict:
         return {
             'name': "triangulo",
             'params': [
-                [distance_factor * 10.0, 60.0],
-                [distance_factor * 10.0, 120.0],
-                [distance_factor * 10.0, 120.0],
+                [distance_factor * 20.0, 60.0],
+                [distance_factor * 20.0, 120.0],
+                [distance_factor * 20.0, 120.0],
                 [0.0, 60.0],
             ],
         }
