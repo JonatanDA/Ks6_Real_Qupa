@@ -84,7 +84,7 @@ DECAY_RATES = {
     3: 0.0,   # 0% de pérdida para Nivel 3 (fragmento nuevo, restaura full)
 }
 TIEMPO_RW_SEG                       = 30                      # Duración del Random Walk en segundos (antes 60s)
-N_MAX_INTENTOS                      = 3                       # Intentos de exploración tras guardar comportamiento
+N_MAX_INTENTOS                      = 1                       # Intentos de exploración tras guardar comportamiento
 
 # Métricas del modelo de ActiveLearning
 back_threshold                      = 10
