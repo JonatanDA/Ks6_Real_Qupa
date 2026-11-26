@@ -14,6 +14,7 @@ import sys
 sys.modules["Controller.apprentice_process"] = sys.modules[__name__]
 sys.modules["apprentice_process"] = sys.modules[__name__]
 
+
 # ============================================================================
 # [SECCIÓN 1] IMPORTACIÓN DE SUBMÓDULOS DEL OBSERVADOR
 # ============================================================================
@@ -397,7 +398,7 @@ def check_patience_and_reconstruct(only_decrement=False):
 
                         comportamientos_ciclo.append(nuevo_comportamiento)
 
-            es_fin_fase = (not hay_comportamiento_nuevo) and ((intentos_redundantes - 1) <= 0)
+            es_fin_fase = (N_MAX_INTENTOS <= 0) or ((not hay_comportamiento_nuevo) and ((intentos_redundantes - 1) <= 0))
             if not es_fin_fase and callable(Print_tracker_calidad_imitacion_data) and len(comportamientos_ciclo) > 0:
                 linea_resumen_actualizada = construir_linea_resumen("Qupa4", comportamientos_ciclo)
                 Print_tracker_calidad_imitacion_data(linea_resumen_actualizada, is_master)
@@ -405,7 +406,7 @@ def check_patience_and_reconstruct(only_decrement=False):
             current_winning_ids = {}
 
         # LÓGICA DE REDUCCIÓN DE INTENTOS Y FIN DE CICLO
-        if hay_comportamiento_nuevo:
+        if hay_comportamiento_nuevo and N_MAX_INTENTOS > 0:
             if UP_LOG_MODE >= 1 or SRP_LOG_MODE >= 1:
                 log("\n===========================================================")
                 if UP_LOG_MODE == 2 and len(logs_similitud) > 0:
