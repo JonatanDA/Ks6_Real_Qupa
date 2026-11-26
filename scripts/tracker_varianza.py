@@ -21,7 +21,7 @@ CARACTERÍSTICAS PRINCIPALES:
 # --- Control de Gráficas y Modos ---
 MOSTRAR_TRAYECTORIA             = 2                 # 0: Sin gráfica visual, 1: Solo varianza, 2: Varianza + Trayectoria
 MODO_SUBSAMPLING                = 0                 # 0: Ver todos los puntos, 1: Solo puntos subsampleados, 2: Gráfica dual (Todos vs Subsampling)
-VENTANA_N                       = 10                # Límite máximo de ventanas emergentes simultáneas (cierra la más antigua).
+VENTANA_N                       = 1                 # Límite máximo de ventanas emergentes simultáneas (cierra la más antigua).
 GRAFICAR_VARIANZA_COMO_LINEA    = True              # True: Grafica varianza como línea continua, False: Como puntos discretos
 GRAFICAR_TRAYECTORIA_COMO_LINEA = True              # True: Grafica trayectoria como línea continua, False: Como puntos discretos
 

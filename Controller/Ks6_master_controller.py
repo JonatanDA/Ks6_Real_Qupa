@@ -45,8 +45,8 @@ speed_dem                           = 10.0 * factor_vel
 # speed_dem_g                         = (speed_dem / 2)
 speed_dem_g                         = 44.0
 
-d_speed                             = 8.0
-g_speed                             = 44.46
+d_speed                             = 7.0
+g_speed                             = 44 
 
 # Límites físicos y configuración del IMU (MPU6050) — fuente única de verdad
 MAX_LINEAR_SPEED_CM_S               = 16.0     # Velocidad lineal máxima: 16.0 cm/s (0.16 m/s)
