@@ -105,7 +105,7 @@ current_patience     = MAX_PATIENCE
 master_tracking      = {}
 srt_anterior_data    = {}
 
-ENABLE_ACTIVE_LEARNING               = True
+ENABLE_ACTIVE_LEARNING               = False
 is_master                            = 0
 Print_tracker_python                 = None
 Print_tracker_paciencia              = None
