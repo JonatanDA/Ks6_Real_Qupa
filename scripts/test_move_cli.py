@@ -5,18 +5,17 @@
 #   Herramienta interactiva de calibración y prueba para Functions/move.py en Qupa físico real.
 #   - T1: ros2 launch qupa_hardware hardware.launch.py namespace:=qupa_D2
 #   - T2: python3 scripts/test_move_cli.py --id D2
-#   - Entrada esperada: ({ang1,dist1}, {ang2,dist2}, ...), vel_angular_deg_s, vel_lineal_cm_s
-#       Ejemplo: ({90,30} , {90,20} , {30,45}), 40, 5
-#       Nota: cada par {ang, dist} se convierte internamente al orden de Move.move(dist, ang).
+#   - Entrada esperada: ang,dis,vel_ang,vel_lin
+#       Ejemplo: 90,30,40,5   (ángulo=90°, distancia=30 cm, vel_ang=40 °/s, vel_lin=5 cm/s)
+#       Nota: se convierte internamente al orden de Move.move(dist, ang, speed_d, speed_g).
 #   - Controles tras finalizar:
-#       Nueva secuencia -> ejecuta los nuevos segmentos
-#       R               -> repite el último comando
-#       N o Ctrl+C      -> frena motores y cierra limpiamente
+#       Nueva entrada -> ejecuta el nuevo comando
+#       R             -> repite el último comando
+#       N o Ctrl+C    -> frena motores y cierra limpiamente
 
 import argparse
 import math
 import os
-import re
 import signal
 import subprocess
 import sys
@@ -62,43 +61,32 @@ IMU_MEASURED_LINEAR_SPEED_CM_S = 0.0      # cm/s real medido con regla (0.0 -> u
 # ============================================================================
 #                            PARSER DE ENTRADA CLI
 # ============================================================================
-_NUM_RE = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
-_PAIR_RE = re.compile(rf"\{{\s*({_NUM_RE})\s*,\s*({_NUM_RE})\s*\}}")
-_FULL_RE = re.compile(
-    rf"^\s*\((.+)\)\s*,\s*({_NUM_RE})\s*,\s*({_NUM_RE})\s*$"
-)
-
-
 def parse_move_command(raw_text: str):
     """
-    Parsea una entrada tipo:
-      ({90,30} , {90,20} , {30,45}), 40, 5
+    Parsea una entrada con formato:
+      ang,dis,vel_ang,vel_lin
+    Ejemplo:
+      90,30,40,5
     Retorna:
-      (segments, speed_g_deg_s, speed_d_cm_s)
-      donde segments = [(ang_deg, dist_cm), ...]
+      (ang_deg, dist_cm, speed_g_deg_s, speed_d_cm_s)
     """
-    m = _FULL_RE.match(raw_text.strip())
-    if not m:
+    parts = [p.strip() for p in raw_text.strip().split(",")]
+    if len(parts) != 4 or any(p == "" for p in parts):
         raise ValueError(
-            "Formato inválido. Usa: ({ang1,dist1}, {ang2,dist2}), vel_ang_deg_s, vel_lin_cm_s\n"
-            "Ejemplo: ({90,30} , {90,20} , {30,45}), 40, 5"
+            "Formato inválido. Usa exactamente 4 valores separados por comas: ang,dis,vel_ang,vel_lin\n"
+            "Ejemplo: 90,30,40,5"
         )
-
-    inner_str, raw_vg, raw_vd = m.group(1), m.group(2), m.group(3)
-    pairs = _PAIR_RE.findall(inner_str)
-    if not pairs:
-        raise ValueError("No se encontraron pares {angulo, distancia} dentro de los paréntesis.")
-
-    # Verificar que no haya texto sobrante extraño fuera de pares y comas
-    leftover = _PAIR_RE.sub("", inner_str)
-    leftover = re.sub(r"[\s,]+", "", leftover)
-    if leftover:
-        raise ValueError(f"Texto no reconocido dentro de los paréntesis: '{leftover}'")
-
-    segments = [(float(ang_s), float(dist_s)) for ang_s, dist_s in pairs]
-    speed_g = float(raw_vg)
-    speed_d = float(raw_vd)
-    return segments, speed_g, speed_d
+    try:
+        ang_deg = float(parts[0])
+        dist_cm = float(parts[1])
+        speed_g = float(parts[2])
+        speed_d = float(parts[3])
+    except ValueError:
+        raise ValueError(
+            "Todos los valores deben ser numéricos: ang,dis,vel_ang,vel_lin\n"
+            "Ejemplo: 90,30,40,5"
+        )
+    return ang_deg, dist_cm, speed_g, speed_d
 
 
 def normalize_robot_id(raw_id: str) -> str:
@@ -125,7 +113,7 @@ def launch_imu_process(robot_id: str, run_env: dict):
     except Exception:
         pass
 
-    print(f"[IMU] Lanzando driver mpu6050 (mantén el robot quieto para tare)...", flush=True)
+    print("[IMU] Lanzando driver mpu6050 (mantén el robot quieto para tare)...", flush=True)
     proc = subprocess.Popen(imu_cmd, env=run_env, start_new_session=True)
     time.sleep(WAIT_AFTER_IMU_SEC)
     return proc
@@ -211,6 +199,9 @@ def run_cli():
         def __init__(self):
             super().__init__("ks6_move_test_cli")
             self.cmd_vel_pub = self.create_publisher(Twist, f"/{robot_id}/cmd_vel", 10)
+            self._cmd_vel_lock = threading.Lock()
+            self._tick_cmd_samples = []
+
             self.rob = Utils.QupaRobotInstance(
                 robot_id,
                 0.0, 0.0, 0.0,
@@ -222,10 +213,30 @@ def run_cli():
             self.rob.odom_received = False
             self.imu_tare_client = self.create_client(Trigger, f"/{robot_id}/{IMU_TARE_SERVICE_SUFFIX}")
             self.rob.imu_tare_client = self.imu_tare_client
+
             self.create_subscription(Imu, f"/{robot_id}/{IMU_TOPIC_SUFFIX}", self._imu_cb, 50)
+            self.create_subscription(Twist, f"/{robot_id}/cmd_vel", self._cmd_vel_cb, 50)
 
         def _imu_cb(self, msg):
             Move.update_imu(self.rob, msg)
+
+        def _cmd_vel_cb(self, msg):
+            with self._cmd_vel_lock:
+                self._tick_cmd_samples.append((float(msg.linear.x), float(msg.angular.z)))
+
+        def clear_tick_cmd_samples(self):
+            with self._cmd_vel_lock:
+                self._tick_cmd_samples.clear()
+
+        def consume_tick_cmd_averages(self):
+            with self._cmd_vel_lock:
+                samples = list(self._tick_cmd_samples)
+                self._tick_cmd_samples.clear()
+            if not samples:
+                return 0.0, 0.0, 0
+            avg_v = sum(v for v, _ in samples) / len(samples)
+            avg_w = sum(w for _, w in samples) / len(samples)
+            return avg_v, avg_w, len(samples)
 
         def publish_cmd(self, lin_x: float, ang_z: float):
             msg = Twist()
@@ -263,8 +274,8 @@ def run_cli():
         print(" [AVISO] No se recibieron datos de la IMU en 6s (verifica que mpu6050 esté activo).")
 
     print("\nFormato de entrada:")
-    print("  ({ang1,dist1} , {ang2,dist2} , ...), vel_ang_deg_s, vel_lin_cm_s")
-    print("  Ejemplo: ({90,30} , {90,20} , {30,45}), 40, 5")
+    print("  ang,dis,vel_ang,vel_lin")
+    print("  Ejemplo: 90,30,40,5  (90°, 30 cm, 40 °/s, 5 cm/s)")
     print("  Comandos: R = repetir último | N o Ctrl+C = salir\n")
 
     last_command = None
@@ -289,76 +300,95 @@ def run_cli():
                 if last_command is None:
                     print("[AVISO] Aún no hay ningún comando previo para repetir.")
                     continue
-                segments, speed_g, speed_d = last_command
-                print(f"[CLI] Repitiendo último comando: {segments} | vel_ang={speed_g} °/s | vel_lin={speed_d} cm/s")
+                ang_deg, dist_cm, speed_g, speed_d = last_command
+                print(
+                    f"[CLI] Repitiendo último comando: ang={ang_deg}°, dis={dist_cm} cm, "
+                    f"vel_ang={speed_g} °/s, vel_lin={speed_d} cm/s"
+                )
             else:
                 try:
-                    segments, speed_g, speed_d = parse_move_command(user_in)
-                    last_command = (segments, speed_g, speed_d)
+                    ang_deg, dist_cm, speed_g, speed_d = parse_move_command(user_in)
+                    last_command = (ang_deg, dist_cm, speed_g, speed_d)
                 except ValueError as err:
                     print(f"[ERROR] {err}")
                     continue
 
-            print(f"\n--- Ejecutando {len(segments)} segmento(s) | speed_g={speed_g:.2f} °/s | speed_d={speed_d:.2f} cm/s ---")
+            Move.r_move(node.rob)
+            node.rob.c1 = 0
+            node.rob.c2 = 0
+            seg_t0 = time.monotonic()
+            all_v_samples = []
+            all_w_samples = []
 
-            for seg_idx, (ang_deg, dist_cm) in enumerate(segments, start=1):
-                Move.r_move(node.rob)
-                node.rob.c1 = 0
-                node.rob.c2 = 0
-                seg_t0 = time.monotonic()
+            print(
+                f"\n[EJECUTANDO] Objetivo -> ang={ang_deg:+.2f}°, dis={dist_cm:.2f} cm | "
+                f"vel_ang={speed_g:.2f} °/s, vel_lin={speed_d:.2f} cm/s"
+            )
+            print(
+                "  tick | fase     | ang_rec(°) | dist_rec(cm) | avg_v(m/s) | avg_w(rad/s) | n_cmd | imu_yaw(°)"
+            )
+            print(
+                "  -----+----------+------------+--------------+------------+--------------+-------+-----------"
+            )
 
-                print(f"\n[SEG {seg_idx}/{len(segments)}] Objetivo -> ángulo={ang_deg:.2f}°, distancia={dist_cm:.2f} cm")
-                print("  tick | fase     | ang_rec(°) | dist_rec(cm) | cmd_v(m/s) | cmd_w(rad/s) | imu_yaw(°)")
-                print("  -----+----------+------------+--------------+------------+--------------+-----------")
+            seg_tick = 0
+            while node.rob.c1 != 2:
+                tick_start = time.monotonic()
+                global_tick += 1
+                seg_tick += 1
 
-                seg_tick = 0
-                while node.rob.c1 != 2:
-                    tick_start = time.monotonic()
-                    global_tick += 1
-                    seg_tick += 1
+                node.clear_tick_cmd_samples()
 
-                    # Orden de Move.move: (rob, distance, target_angle, speed_d, speed_g, timer, stop)
-                    c2_out, c1_out, moved_dist, moved_ang_rad = Move.move(
-                        node.rob,
-                        dist_cm,
-                        ang_deg,
-                        speed_d,
-                        speed_g,
-                        global_tick,
-                        False,
-                    )
-                    node.publish_cmd(node.rob.cmd_linear_x, node.rob.cmd_angular_z)
+                # Orden de Move.move: (rob, distance, target_angle, speed_d, speed_g, timer, stop)
+                c2_out, c1_out, moved_dist, moved_ang_rad = Move.move(
+                    node.rob,
+                    dist_cm,
+                    ang_deg,
+                    speed_d,
+                    speed_g,
+                    global_tick,
+                    False,
+                )
+                node.publish_cmd(node.rob.cmd_linear_x, node.rob.cmd_angular_z)
 
-                    if c1_out == 0:
-                        fase = f"GIRO:{getattr(node.rob, 'imu_turn_substate', 'TURN')}"
-                    elif c1_out == 1:
-                        fase = "AVANCE"
-                    else:
-                        fase = "FIN"
+                # Esperar el resto del tick para capturar todos los mensajes de /cmd_vel en este tick
+                elapsed_tick = time.monotonic() - tick_start
+                sleep_s = dt - elapsed_tick
+                if sleep_s > 0.0:
+                    time.sleep(sleep_s)
 
-                    moved_ang_deg = math.degrees(moved_ang_rad)
-                    imu_yaw_deg = math.degrees(float(getattr(node.rob, "imu_yaw", 0.0)))
-                    print(
-                        f"  {seg_tick:4d} | {fase:<8s} | {moved_ang_deg:+10.2f} | {moved_dist:12.2f} | "
-                        f"{node.rob.cmd_linear_x:+10.4f} | {node.rob.cmd_angular_z:+12.4f} | {imu_yaw_deg:+9.2f}",
-                        flush=True,
-                    )
+                avg_v, avg_w, n_cmd = node.consume_tick_cmd_averages()
+                if n_cmd > 0:
+                    all_v_samples.append(avg_v)
+                    all_w_samples.append(avg_w)
 
-                    elapsed_tick = time.monotonic() - tick_start
-                    sleep_s = dt - elapsed_tick
-                    if sleep_s > 0.0:
-                        time.sleep(sleep_s)
+                if c1_out == 0:
+                    fase = f"GIRO:{getattr(node.rob, 'imu_turn_substate', 'TURN')}"
+                elif c1_out == 1:
+                    fase = "AVANCE"
+                else:
+                    fase = "FIN"
 
-                node.stop_motors()
-                seg_dur = time.monotonic() - seg_t0
+                moved_ang_deg = math.degrees(moved_ang_rad)
+                imu_yaw_deg = math.degrees(float(getattr(node.rob, "imu_yaw", 0.0)))
                 print(
-                    f"[FIN SEG {seg_idx}/{len(segments)}] Tiempo={seg_dur:.2f}s | "
-                    f"Objetivo=({ang_deg:+.2f}°, {dist_cm:.2f} cm) | "
-                    f"Reportado=({math.degrees(node.rob.move_angle):+.2f}°, {node.rob.move_distance:.2f} cm)\n",
+                    f"  {seg_tick:4d} | {fase:<8s} | {moved_ang_deg:+10.2f} | {moved_dist:12.2f} | "
+                    f"{avg_v:+10.4f} | {avg_w:+12.4f} | {n_cmd:5d} | {imu_yaw_deg:+9.2f}",
                     flush=True,
                 )
 
-            print("--- Secuencia completada. Ingresa otro comando, 'R' para repetir o 'N' para salir. ---\n")
+            node.stop_motors()
+            seg_dur = time.monotonic() - seg_t0
+            seg_avg_v = (sum(all_v_samples) / len(all_v_samples)) if all_v_samples else 0.0
+            seg_avg_w = (sum(all_w_samples) / len(all_w_samples)) if all_w_samples else 0.0
+            print(
+                f"\n[FIN] Tiempo={seg_dur:.2f}s | "
+                f"Objetivo=({ang_deg:+.2f}°, {dist_cm:.2f} cm) | "
+                f"Reportado=({math.degrees(node.rob.move_angle):+.2f}°, {node.rob.move_distance:.2f} cm) | "
+                f"Prom /cmd_vel: v={seg_avg_v:+.4f} m/s, w={seg_avg_w:+.4f} rad/s\n",
+                flush=True,
+            )
+            print("--- Ingresa otro comando (ang,dis,vel_ang,vel_lin), 'R' para repetir o 'N' para salir. ---\n")
 
     except KeyboardInterrupt:
         print("\n[CLI] Interrumpido por Ctrl+C.")
