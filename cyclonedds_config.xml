@@ -15,7 +15,7 @@
       <MaxAutoParticipantIndex>100</MaxAutoParticipantIndex>
       <Peers>
 
-        <Peer address="192.168.0.5" />
+        <Peer address="192.168.0.105" />
 
         <!--  OE -->
         <!-- <Peer address="192.168.0.110" />  -->
@@ -24,13 +24,13 @@
         <Peer address="192.168.0.114" /> 
 
         <!-- D2 -->
-        <Peer address="192.168.0.116" /> 
+        <!-- <Peer address="192.168.0.116" />  -->
 
         <!-- AE -->
-        <Peer address="192.168.0.117" /> 
+        <!-- <Peer address="192.168.0.117" />  -->
 
         <!-- 3A - AF -->
-        <Peer address="192.168.0.118" /> 
+        <!-- <Peer address="192.168.0.118" />  -->
 
         <!-- F4 -->
         <!-- <Peer address="192.168.0.119" />  -->
