@@ -85,8 +85,8 @@ N_MAX_INTENTOS                      = 3                       # 0 = 1 solo ciclo
 ACTIVE_LEARNING_METHOD              = "Centroide_threshold"
 back_threshold                      = 10
 front_threshold                     = 15
-max_tracking_distance               = 10
-porcentaje                          = 0.75
+max_tracking_distance               = 25
+porcentaje                          = 0.5
 
 # Métricas del módulo de ruido en cámara de blobs del aprendiz
 noise_cfg = {
