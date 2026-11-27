@@ -398,7 +398,7 @@ def run_cli():
     effective_gyro_sign = float(Move.IMU_GYRO_Z_SIGN) * float(args.gyro_scale)
     imu_topic_suffix = Move.IMU_TOPIC_SUFFIX
     imu_tare_suffix = Move.IMU_TARE_SERVICE_SUFFIX
-    imu_tare_timeout_s = float(Move.imu_tare_timeout_s)
+    imu_tare_timeout_s = float(Move.IMU_TARE_TIMEOUT_S)
 
     if args.v_real is not None:
         active_v_real = float(args.v_real)
