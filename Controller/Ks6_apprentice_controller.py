@@ -82,7 +82,7 @@ N_MAX_INTENTOS                      = 3                       # 0 = 1 solo ciclo
 #   "centroide_threshold" (o 2) -> Centroide_threshold.py (centroide con umbral)
 #   "centroide_pid"       (o 3) -> Centroide_PID.py (centroide con PID)
 #   "campos_vectoriales"  (o 4) -> CamposVectoriales.py (campos vectoriales / fuerzas físicas)
-ACTIVE_LEARNING_METHOD              = "CamposVectoriales"
+ACTIVE_LEARNING_METHOD              = "campos_vectoriales"
 back_threshold                      = 10
 front_threshold                     = 15
 max_tracking_distance               = 25
