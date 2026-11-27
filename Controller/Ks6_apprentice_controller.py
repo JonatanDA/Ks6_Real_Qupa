@@ -46,12 +46,12 @@ Distribucion_sensores_de_proximidad = [0, -45, 45, -90, 90, 180]
 Num_cantidad_leds                   = 2
 FOOTBOT_INTERWHEEL_DISTANCE         = 8.6
 
-factor_vel                          = 0.7
+factor_vel                          = 0.6
 speed_dem                           = 10.0 * factor_vel
 speed_dem_g                         = 40.0
 
-d_speed                             = 8.0
-g_speed                             = 44 
+d_speed                             = 7.0     # cm/s (7.0 coincide con v_real calibrado en qupa_48; en modo 'estatico' no se mueve)
+g_speed                             = 44
 
 # Métricas del modelo de observación y paciencia
 # Límites físicos de saturación del robot Qupa (Gazebo y Hardware Real) y configuración IMU (MPU6050)
@@ -76,6 +76,13 @@ TIEMPO_RW_SEG                       = 30                      # Duración de esp
 N_MAX_INTENTOS                      = 3                       # 0 = 1 solo ciclo (aprenda o no); >=1 = intentos extra de exploración
 
 # Métricas del modelo de ActiveLearning
+# Selector del método de Active Learning:
+#   "estatico"            (o 0) -> Estatico.py (observación pura, no se mueve)
+#   "centroide_basic"     (o 1) -> Centroide_basic.py (centroide básico)
+#   "centroide_threshold" (o 2) -> Centroide_threshold.py (centroide con umbral)
+#   "centroide_pid"       (o 3) -> Centroide_PID.py (centroide con PID)
+#   "campos_vectoriales"  (o 4) -> CamposVectoriales.py (campos vectoriales / fuerzas físicas)
+ACTIVE_LEARNING_METHOD              = "Centroide_threshold"
 back_threshold                      = 10
 front_threshold                     = 15
 max_tracking_distance               = 10
@@ -123,7 +130,32 @@ Move               = _require_any(["Functions.move", "move"])
 apprentice_process = _require_any(["Controller.apprentice_process", "apprentice_process"])
 apprentice_entries = _require_any(["Controller.apprentice_entries", "apprentice_entries"])
 BehaviorSimilarity = _require_any(["Functions.Observer.BehaviorSimilarity", "BehaviorSimilarity"])
-from Functions.Observer.Active_learning.Centroide_threshold import CentroideThreshold
+_ACTIVE_LEARNING_MODULES = {
+    "0":                   "Functions.Observer.Active_learning.Estatico",
+    "estatico":            "Functions.Observer.Active_learning.Estatico",
+    "static":              "Functions.Observer.Active_learning.Estatico",
+    "1":                   "Functions.Observer.Active_learning.Centroide_basic",
+    "centroide_basic":     "Functions.Observer.Active_learning.Centroide_basic",
+    "basic":               "Functions.Observer.Active_learning.Centroide_basic",
+    "2":                   "Functions.Observer.Active_learning.Centroide_threshold",
+    "centroide_threshold": "Functions.Observer.Active_learning.Centroide_threshold",
+    "threshold":           "Functions.Observer.Active_learning.Centroide_threshold",
+    "3":                   "Functions.Observer.Active_learning.Centroide_PID",
+    "centroide_pid":       "Functions.Observer.Active_learning.Centroide_PID",
+    "pid":                 "Functions.Observer.Active_learning.Centroide_PID",
+    "4":                   "Functions.Observer.Active_learning.CamposVectoriales",
+    "campos_vectoriales":  "Functions.Observer.Active_learning.CamposVectoriales",
+    "campos":              "Functions.Observer.Active_learning.CamposVectoriales",
+}
+
+
+def load_active_learning_module(method_key=None):
+    key = str(ACTIVE_LEARNING_METHOD if method_key is None else method_key).strip().lower()
+    mod_path = _ACTIVE_LEARNING_MODULES.get(key)
+    if mod_path is None:
+        valid = "estatico, centroide_basic, centroide_threshold, centroide_pid, campos_vectoriales (o 0..4)"
+        raise ValueError(f"Método de Active Learning desconocido: '{key}'. Opciones válidas: {valid}")
+    return importlib.import_module(mod_path)
 
 shared_config.sync_from_controller(sys.modules[__name__])
 
@@ -731,7 +763,12 @@ class Ks6ApprenticeControllerNode(Node):
         )
         apprentice_process.is_master = 0
 
-        self.active_learning = CentroideThreshold()
+        al_mod = load_active_learning_module(ACTIVE_LEARNING_METHOD)
+        self.active_learning = al_mod.ActiveLearning()
+        apprentice_entries.ActiveLearning = al_mod
+        self.get_logger().info(
+            f"[ActiveLearning] Método activo: '{ACTIVE_LEARNING_METHOD}' ({al_mod.__name__})"
+        )
         self.timer_tick = 1
         self.initialized = False
         self.start_wall_time = time.time()
