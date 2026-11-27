@@ -63,7 +63,7 @@ IMU_TURN_PAUSE_S                    = 0.5     # s de pausa de frenado (solo acti
 IMU_SETTLE_S                        = 0.3     # s tras el tare antes de girar (solo si IMU_RETARE_EACH_SEGMENT=True)
 IMU_TARE_TIMEOUT_S                  = 5.0     # s máximo de espera al servicio /tare
 IMU_TIMEOUT_FACTOR                  = 2.5     # Seguridad: aborta giro tras factor × tiempo esperado
-IMU_MEASURED_LINEAR_SPEED_CM_S      = 0.0     # cm/s real medido con regla (0.0 → usa speed_dem / d_speed)
+IMU_MEASURED_LINEAR_SPEED_CM_S      = 15.3     # cm/s real medido con regla (0.0 → usa speed_dem / d_speed) 
 
 # Pausa con LEDs apagados al finalizar cada repetición del comportamiento (en segundos)
 PAUSA_FIN_PATRON_SEG                = 8.0
