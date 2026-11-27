@@ -123,7 +123,7 @@ Move               = _require_any(["Functions.move", "move"])
 apprentice_process = _require_any(["Controller.apprentice_process", "apprentice_process"])
 apprentice_entries = _require_any(["Controller.apprentice_entries", "apprentice_entries"])
 BehaviorSimilarity = _require_any(["Functions.Observer.BehaviorSimilarity", "BehaviorSimilarity"])
-from Functions.Observer.Active_learning.CamposVectoriales import CamposVectoriales
+from Functions.Observer.Active_learning.Centroide_threshold import CentroideThreshold
 
 shared_config.sync_from_controller(sys.modules[__name__])
 
@@ -731,7 +731,7 @@ class Ks6ApprenticeControllerNode(Node):
         )
         apprentice_process.is_master = 0
 
-        self.active_learning = CamposVectoriales()
+        self.active_learning = CentroideThreshold()
         self.timer_tick = 1
         self.initialized = False
         self.start_wall_time = time.time()

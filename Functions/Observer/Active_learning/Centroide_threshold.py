@@ -8,9 +8,9 @@ MAX_TRACKING_DISTANCE    = 15.0      # (cm) Si el centroide está dentro de este
 PAUSE_TICKS_ON_CHANGE    = 1         # Ticks de pausa al reanudar movimiento.
 
 # Umbrales de Supervivencia
-FRONT_THRESHOLD          = 25.0
+FRONT_THRESHOLD          = 15.0
 BACK_THRESHOLD           = 10.0
-PROX_CRITICAL_THRESHOLD  = 0.90
+PROX_CRITICAL_THRESHOLD  = 0.80
 
 import math
 from Controller import apprentice_process
