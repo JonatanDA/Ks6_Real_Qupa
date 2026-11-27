@@ -81,7 +81,7 @@ IMU_TIMEOUT_FACTOR             = 2.5     # seguridad: corta un giro tras factor 
 IMU_MEASURED_LINEAR_SPEED_CM_S = 0.0     # 0.0 -> usa ROBOT_V_REAL[robot_id] (o v_real si no está en el diccionario)
 
 # Corrección de avance en línea recta con IMU durante Fase 2 (AVANCE / reversa)
-ENABLE_IMU_STRAIGHT_HOLD       = False    # True: corrige desvíos laterales usando imu_yaw al avanzar/retroceder
+ENABLE_IMU_STRAIGHT_HOLD       = True    # True: corrige desvíos laterales usando imu_yaw al avanzar/retroceder
 IMU_STRAIGHT_KP                = 2.2     # Ganancia proporcional [rad/s por rad de error de rumbo]
 IMU_STRAIGHT_MAX_W_RAD_S       = 0.45    # Límite de corrección angular [rad/s] (suave, sin invertir ruedas)
 IMU_STRAIGHT_DEADBAND_DEG      = 1.0     # Banda muerta [°] para ignorar ruido mínimo del giroscopio
