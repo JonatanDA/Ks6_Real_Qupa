@@ -4,7 +4,7 @@
 # AL_LOG_MODE              = 2
 AL_SMOOTH_TICKS          = 3
 AL_SMOOTH_METHOD         = "median"
-MAX_TRACKING_DISTANCE    = 15.0      # (cm) Si el centroide está dentro de este radio, NO se mueve.
+MAX_TRACKING_DISTANCE    = 35.0      # (cm) Si el centroide está dentro de este radio, NO se mueve.
 PAUSE_TICKS_ON_CHANGE    = 1         # Ticks de pausa al reanudar movimiento.
 
 # Umbrales de Supervivencia
