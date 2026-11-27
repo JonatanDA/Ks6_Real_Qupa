@@ -46,12 +46,12 @@ Distribucion_sensores_de_proximidad = [0, -45, 45, -90, 90, 180]
 Num_cantidad_leds                   = 2
 FOOTBOT_INTERWHEEL_DISTANCE         = 8.6
 
-factor_vel                          = 0.6
+factor_vel                          = 0.7
 speed_dem                           = 10.0 * factor_vel
 speed_dem_g                         = 40.0
 
-d_speed                             = 0.0
-g_speed                             = 44.46
+d_speed                             = 8.0
+g_speed                             = 44 
 
 # Métricas del modelo de observación y paciencia
 # Límites físicos de saturación del robot Qupa (Gazebo y Hardware Real) y configuración IMU (MPU6050)

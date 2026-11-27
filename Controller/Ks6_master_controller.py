@@ -40,13 +40,13 @@ Distribucion_sensores_de_proximidad = [0, -45, 45, -90, 90, 180]
 Num_cantidad_leds                   = 2
 FOOTBOT_INTERWHEEL_DISTANCE         = 8.6
 
-factor_vel                          = 1.2
+factor_vel                          = 0.7
 speed_dem                           = 10.0 * factor_vel
 # speed_dem_g                         = (speed_dem / 2)
 speed_dem_g                         = 40.0
 
 d_speed                             = 8.0
-g_speed                             = 44.46
+g_speed                             = 44      
 
 # Límites físicos y configuración del IMU (MPU6050) — fuente única de verdad
 MAX_LINEAR_SPEED_CM_S               = 16.0     # Velocidad lineal máxima: 16.0 cm/s (0.16 m/s)

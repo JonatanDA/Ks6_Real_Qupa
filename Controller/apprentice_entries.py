@@ -180,7 +180,7 @@ ROBOT_CAM_CALIB_TABLES = {
     # leyendo `distance_px` y `angle_deg` en `ros2 topic echo /qupa_48/camera/detections`.
     # Puedes usar claves [-180..180] o [0..360) indistintamente (ej. -45 equivale a 315).
     "qupa_48": {
-        # Calibración empírica medida en 0° (55 y 60 cm se promediaron en 57.5 cm por saturación en 101.14 px)
+        # Calibración empírica 0° (10-35 cm + barrido fino 40-60 cm; techo óptico del espejo en 101.38 px = 60 cm)
         0: [
             (73.95, 10.0),
             (84.00, 15.0),
@@ -188,10 +188,16 @@ ROBOT_CAM_CALIB_TABLES = {
             (93.63, 25.0),
             (95.51, 30.0),
             (96.81, 35.0),
-            (98.24, 40.0),
-            (99.46, 45.0),
-            (100.47, 50.0),
-            (101.14, 57.5),
+            (97.29, 40.0),
+            (98.17, 43.0),
+            (98.90, 46.0),
+            (99.36, 48.0),
+            (99.55, 50.0),
+            (99.81, 52.0),
+            (99.93, 54.0),
+            (100.73, 56.0),
+            (101.22, 58.0),
+            (101.38, 60.0),
         ],
         45:   [],
         90:   [],
