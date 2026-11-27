@@ -116,26 +116,7 @@ CAM_MAX_DISTANCE_CM         = 80.0   # Distancia máxima admisible en la arena (
 CAM_POLY_COEFFS             = [0.0, 0.0022, -0.15, 5.0]
 
 # Tabla empírica de pares (distance_px, distance_cm) para interpolación si CAM_CALIB_MODE == "table"
-
-# Tabla del robot 3A
-# CAM_CALIB_POINTS_PX_CM = [
-#     (77.77, 12.0),
-#     (84.83, 15.0),
-#     (88.67, 18.0),
-#     (91.73, 21.0),
-#     (92.73, 24.0),
-#     (94.72, 27.0),
-#     (95.79, 30.0),
-#     (96.72, 33.0),
-#     (97.71, 36.0),
-#     (98.68, 40.5),  
-#     (99.65, 45.0),
-#     (100.71, 51.0),
-#     (101.70, 60.0),
-#     (102.64, 70.0),
-#     (103.64, 80.0),
-# ]
-
+# Respaldo por defecto (tabla 1D de qupa_AE) si un robot_id no está en ROBOT_CAM_CALIB_TABLES:
 CAM_CALIB_POINTS_PX_CM = [
     (73.32, 8.0),
     (77.49, 12.0),
@@ -161,6 +142,67 @@ CAM_CALIB_POINTS_PX_CM = [
     (98.03, 92.0),
 ]
 
+# Convención de ángulo usada en las claves de ROBOT_CAM_CALIB_TABLES:
+#   True  -> usa det.angle_deg directo de /camera/detections (tal cual sale en `ros2 topic echo`)
+#   False -> usa raw_angle_deg ya convertido al marco ROS 2 del robot
+CAM_TABLE_USE_RAW_DET_ANGLE = True
+
+# Mapas de calibración por robot (soporta 1 solo ángulo o mapa polar cada 45°):
+#   - Si un robot tiene 1 solo ángulo con datos (ej. {0: [...]}) o una lista directa [(px, cm), ...],
+#     ese mismo perfil se aplica a los 360° (total compatibilidad con qupa_AE y qupa_3A).
+#   - Si un robot tiene varios ángulos (ej. 0, 45, 90, 135, 180, -135, -90, -45 o 0..315),
+#     interpola circularmente entre los dos ángulos vecinos y linealmente en px -> cm.
+#   - Las entradas con lista vacía [] se ignoran automáticamente mientras completas las medidas.
+ROBOT_CAM_CALIB_TABLES = {
+    "qupa_AE": {
+        0: CAM_CALIB_POINTS_PX_CM,
+    },
+    "qupa_3A": {
+        0: [
+            (77.77, 12.0),
+            (84.83, 15.0),
+            (88.67, 18.0),
+            (91.73, 21.0),
+            (92.73, 24.0),
+            (94.72, 27.0),
+            (95.79, 30.0),
+            (96.72, 33.0),
+            (97.71, 36.0),
+            (98.68, 40.5),
+            (99.65, 45.0),
+            (100.71, 51.0),
+            (101.70, 60.0),
+            (102.64, 70.0),
+            (103.64, 80.0),
+        ],
+    },
+    # Mapa polar cada 45° para qupa_48: rellena ~10 pares (distance_px, distance_cm) por ángulo
+    # leyendo `distance_px` y `angle_deg` en `ros2 topic echo /qupa_48/camera/detections`.
+    # Puedes usar claves [-180..180] o [0..360) indistintamente (ej. -45 equivale a 315).
+    "qupa_48": {
+        # Calibración empírica medida en 0° (55 y 60 cm se promediaron en 57.5 cm por saturación en 101.14 px)
+        0: [
+            (73.95, 10.0),
+            (84.00, 15.0),
+            (89.95, 20.0),
+            (93.63, 25.0),
+            (95.51, 30.0),
+            (96.81, 35.0),
+            (98.24, 40.0),
+            (99.46, 45.0),
+            (100.47, 50.0),
+            (101.14, 57.5),
+        ],
+        45:   [],
+        90:   [],
+        135:  [],
+        180:  [],
+        -135: [],
+        -90:  [],
+        -45:  [],
+    },
+}
+
 # Convención angular entre camera_sim_node (atan2(vx, -vy), horario+) y marco ROS 2 del robot (antihorario+)
 CAMERA_ANGLE_SIGN           = -1.0
 CAMERA_ANGLE_OFFSET_DEG     = 0.0
@@ -177,23 +219,65 @@ def update_camera_detections(app, detection_array_msg):
         app.latest_detections = targets
 
 
-def distance_px_to_cm(distance_px: float) -> float:
+def _interp_1d_px_to_cm(px: float, points_px_cm) -> float:
+    """Interpolación lineal por tramos sobre una lista de pares (distance_px, distance_cm)."""
+    pts = sorted(points_px_cm, key=lambda item: item[0])
+    if px <= pts[0][0]:
+        p0, p1 = pts[0], pts[1]
+    elif px >= pts[-1][0]:
+        p0, p1 = pts[-2], pts[-1]
+    else:
+        p0, p1 = pts[0], pts[1]
+        for i in range(len(pts) - 1):
+            if pts[i][0] <= px <= pts[i + 1][0]:
+                p0, p1 = pts[i], pts[i + 1]
+                break
+    denom = (p1[0] - p0[0])
+    t = ((px - p0[0]) / denom) if abs(denom) > 1e-6 else 0.0
+    return p0[1] + t * (p1[1] - p0[1])
+
+
+def _resolve_robot_cam_table(robot_id=None):
+    """
+    Devuelve un dict normalizado {ang_360: [(px, cm), ...]} solo con ángulos que tengan >= 2 puntos.
+    Si el robot no está en ROBOT_CAM_CALIB_TABLES o su mapa está vacío, usa CAM_CALIB_POINTS_PX_CM.
+    """
+    entry = None
+    if robot_id is not None:
+        raw = str(robot_id).strip().lstrip("/")
+        candidates = [raw, raw.lower(), raw.upper()]
+        if not raw.lower().startswith("qupa"):
+            candidates.extend([f"qupa_{raw}", f"qupa_{raw.lower()}", f"qupa_{raw.upper()}"])
+        lookup = {k.lower(): val for k, val in ROBOT_CAM_CALIB_TABLES.items()}
+        for cand in candidates:
+            if cand.lower() in lookup:
+                entry = lookup[cand.lower()]
+                break
+
+    angle_map = {}
+    if isinstance(entry, dict):
+        for ang_key, pts in entry.items():
+            if pts and len(pts) >= 2:
+                angle_map[float(ang_key) % 360.0] = list(pts)
+    elif isinstance(entry, (list, tuple)) and len(entry) >= 2:
+        angle_map[0.0] = list(entry)
+
+    if not angle_map and len(CAM_CALIB_POINTS_PX_CM) >= 2:
+        angle_map[0.0] = list(CAM_CALIB_POINTS_PX_CM)
+
+    return angle_map
+
+
+def distance_px_to_cm(distance_px: float, angle_deg: float = None, robot_id=None) -> float:
     """
     Convierte la distancia radial en píxeles (medida desde el centro del espejo 360°)
     a distancia horizontal real en centímetros en el plano de la arena.
+    Soporta tabla 1D (un solo ángulo mapeado a 360°) y mapa polar 2D por ángulo (ej. cada 45°).
     """
     px = float(distance_px)
     if px <= 0.0:
         return 0.0
 
-    # ========================================================================
-    # [ESPACIO RESERVADO PARA CALIBRACIÓN EMPÍRICA DE LA CÁMARA (px -> cm)]
-    # Cuando midas los puntos reales (ej. a 20, 40, 60, 80, 100 cm) con
-    # /Qupa4/camera/debug_image y /Qupa4/camera/detections:
-    #   1) Puedes actualizar CAM_POLY_COEFFS = [a3, a2, a1, a0] y cambiar
-    #      CAM_CALIB_MODE = "polynomial", o
-    #   2) Actualizar CAM_CALIB_POINTS_PX_CM y cambiar CAM_CALIB_MODE = "table".
-    # ========================================================================
     mode = str(CAM_CALIB_MODE).lower()
 
     if mode == "polynomial":
@@ -202,23 +286,42 @@ def distance_px_to_cm(distance_px: float) -> float:
         dist_cm = dist_cm * float(CAM_RADIAL_SCALE_FACTOR) + float(CAM_RADIAL_OFFSET_CM)
         return max(float(CAM_MIN_DISTANCE_CM), min(float(CAM_MAX_DISTANCE_CM), dist_cm))
 
-    if mode == "table" and len(CAM_CALIB_POINTS_PX_CM) >= 2:
-        pts = sorted(CAM_CALIB_POINTS_PX_CM, key=lambda item: item[0])
-        if px <= pts[0][0]:
-            p0, p1 = pts[0], pts[1]
-        elif px >= pts[-1][0]:
-            p0, p1 = pts[-2], pts[-1]
-        else:
-            p0, p1 = pts[0], pts[1]
-            for i in range(len(pts) - 1):
-                if pts[i][0] <= px <= pts[i + 1][0]:
-                    p0, p1 = pts[i], pts[i + 1]
-                    break
-        denom = (p1[0] - p0[0])
-        t = ((px - p0[0]) / denom) if abs(denom) > 1e-6 else 0.0
-        dist_cm = p0[1] + t * (p1[1] - p0[1])
-        dist_cm = dist_cm * float(CAM_RADIAL_SCALE_FACTOR) + float(CAM_RADIAL_OFFSET_CM)
-        return max(float(CAM_MIN_DISTANCE_CM), min(float(CAM_MAX_DISTANCE_CM), dist_cm))
+    if mode == "table":
+        angle_map = _resolve_robot_cam_table(robot_id)
+        if angle_map:
+            sorted_angles = sorted(angle_map.keys())
+            if len(sorted_angles) == 1 or angle_deg is None:
+                dist_cm = _interp_1d_px_to_cm(px, angle_map[sorted_angles[0]])
+            else:
+                ang_360 = float(angle_deg) % 360.0
+                # Buscar los dos ángulos vecinos en el círculo [0, 360)
+                a_lo = None
+                a_hi = None
+                for i in range(len(sorted_angles) - 1):
+                    if sorted_angles[i] <= ang_360 <= sorted_angles[i + 1]:
+                        a_lo = sorted_angles[i]
+                        a_hi = sorted_angles[i + 1]
+                        break
+                if a_lo is None:
+                    # Envoltura circular entre el último ángulo y el primero (+360°)
+                    a_lo = sorted_angles[-1]
+                    a_hi = sorted_angles[0] + 360.0
+                    ang_eval = ang_360 if ang_360 >= a_lo else (ang_360 + 360.0)
+                    pts_lo = angle_map[sorted_angles[-1]]
+                    pts_hi = angle_map[sorted_angles[0]]
+                else:
+                    ang_eval = ang_360
+                    pts_lo = angle_map[a_lo]
+                    pts_hi = angle_map[a_hi]
+
+                span = a_hi - a_lo
+                w = ((ang_eval - a_lo) / span) if abs(span) > 1e-6 else 0.0
+                d_lo = _interp_1d_px_to_cm(px, pts_lo)
+                d_hi = _interp_1d_px_to_cm(px, pts_hi)
+                dist_cm = (1.0 - w) * d_lo + w * d_hi
+
+            dist_cm = dist_cm * float(CAM_RADIAL_SCALE_FACTOR) + float(CAM_RADIAL_OFFSET_CM)
+            return max(float(CAM_MIN_DISTANCE_CM), min(float(CAM_MAX_DISTANCE_CM), dist_cm))
 
     if mode == "linear":
         dist_cm = px * float(CAM_PX_TO_CM_LINEAR) * float(CAM_RADIAL_SCALE_FACTOR) + float(CAM_RADIAL_OFFSET_CM)
@@ -258,11 +361,18 @@ def collect_omnidirectional_blobs(app, robots: dict = None, max_fov_radius_cm: f
     if dets is None:
         dets = latest_detections
 
+    rob_id = (
+        getattr(app, 'id', None)
+        or getattr(app, 'name', None)
+        or getattr(app, 'robot_id', None)
+    ) if app is not None else None
+
     for det in (dets or []):
-        raw_dist_cm = distance_px_to_cm(float(det.distance_px))
         raw_angle_deg = math_helper.normalize_deg_180(
             float(CAMERA_ANGLE_SIGN) * float(det.angle_deg) + float(CAMERA_ANGLE_OFFSET_DEG)
         )
+        lookup_angle_deg = float(det.angle_deg) if CAM_TABLE_USE_RAW_DET_ANGLE else raw_angle_deg
+        raw_dist_cm = distance_px_to_cm(float(det.distance_px), angle_deg=lookup_angle_deg, robot_id=rob_id)
 
         # Log de diagnóstico en consola (visible con NIVEL_LOG = 2)
         # apprentice_process.log_py(
