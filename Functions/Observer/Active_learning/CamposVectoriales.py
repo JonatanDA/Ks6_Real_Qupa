@@ -5,11 +5,11 @@
 AL_SMOOTH_TICKS          = 3
 AL_SMOOTH_METHOD         = "median"
 
-M_MAX_DIST               = 140.0
+M_MAX_DIST               = 100.0
 PUSH_LIMIT               = 30.0
 NEUTRAL_ZONE             = 5.0
 N_CRIT_DIST              = 15.0
-K_FORCE                  = 1.2   # Solo escala la fuerza de REPULSIÓN (d <= PUSH_LIMIT - NEUTRAL_ZONE)
+K_FORCE                  = 0.6   # Solo escala la fuerza de REPULSIÓN (d <= PUSH_LIMIT - NEUTRAL_ZONE)
 MIN_FORCE_IGNORE         = 10.0
 
 VECTOR_CHANGE_TOL        = 10.0
