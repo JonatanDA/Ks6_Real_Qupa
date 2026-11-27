@@ -78,10 +78,10 @@ IMU_TURN_PAUSE_S               = 0.5     # s quieto tras frenar el giro (solo si
 IMU_SETTLE_S                   = 0.3     # s de estabilización tras cada tare (solo si IMU_RETARE_EACH_SEGMENT=True)
 IMU_TARE_TIMEOUT_S             = 5.0     # s máximo de espera al servicio /tare
 IMU_TIMEOUT_FACTOR             = 2.5     # seguridad: corta un giro tras factor × tiempo esperado
-IMU_MEASURED_LINEAR_SPEED_CM_S = v_real  # respaldo sincronizado con v_real
+IMU_MEASURED_LINEAR_SPEED_CM_S = 0.0     # 0.0 -> usa ROBOT_V_REAL[robot_id] (o v_real si no está en el diccionario)
 
 # Corrección de avance en línea recta con IMU durante Fase 2 (AVANCE / reversa)
-ENABLE_IMU_STRAIGHT_HOLD       = True    # True: corrige desvíos laterales usando imu_yaw al avanzar/retroceder
+ENABLE_IMU_STRAIGHT_HOLD       = False    # True: corrige desvíos laterales usando imu_yaw al avanzar/retroceder
 IMU_STRAIGHT_KP                = 2.2     # Ganancia proporcional [rad/s por rad de error de rumbo]
 IMU_STRAIGHT_MAX_W_RAD_S       = 0.45    # Límite de corrección angular [rad/s] (suave, sin invertir ruedas)
 IMU_STRAIGHT_DEADBAND_DEG      = 1.0     # Banda muerta [°] para ignorar ruido mínimo del giroscopio
@@ -929,3 +929,4 @@ class Move:
     set_wheels_cm_s       = staticmethod(set_wheels_cm_s)
     clamp_cmd_vel         = staticmethod(clamp_cmd_vel)
     update_imu            = staticmethod(update_imu)
+    get_v_real            = staticmethod(get_v_real)

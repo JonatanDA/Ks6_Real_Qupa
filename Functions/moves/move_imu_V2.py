@@ -27,15 +27,34 @@ except ImportError:
 
 
 # ============================================================================
-# CALIBRACIÓN DE VELOCIDAD LINEAL REAL (v_real)
+# CALIBRACIÓN DE VELOCIDAD LINEAL REAL POR ROBOT (ROBOT_V_REAL / v_real)
 # ============================================================================
-# Velocidad lineal real medida con regla en el robot físico [cm/s].
-#   - Valor > 0.0 : se usa para calcular el tiempo de avance (t = distancia / v_real)
-#                   cuando el controlador tiene IMU_MEASURED_LINEAR_SPEED_CM_S = 0.0.
-#   - Valor = 0.0 : usa directamente la velocidad pedida (speed_d).
-# Calibración qupa_48 @ vel_lin = 7.0 cm/s (0.07 m/s), batería ~7.7V:
-#   promedio 65.67 cm en 4.286 s nominales -> 15.3 cm/s.
-v_real = 15.3
+# Fuente única de verdad de velocidad lineal real medida con regla [cm/s].
+#   - Se busca primero el ID del robot en ROBOT_V_REAL (acepta "qupa_48", "48", etc.).
+#   - Si el ID no está en ROBOT_V_REAL, se usa `v_real` como respaldo por defecto.
+#   - Si el resultado es 0.0, se usa directamente la velocidad pedida (speed_d).
+ROBOT_V_REAL = {
+    "qupa_48": 15.3,   # @ vel_lin = 7.0 cm/s (0.07 m/s, 82% PWM, ~7.7V)
+    "qupa_AE": 9.2,    # @ vel_lin = 8.0 cm/s (0.08 m/s, 90% PWM, ~7.8V)
+    "qupa_D2": 15.3,   # pendiente de calibrar con regla
+    "qupa_3A": 15.3,   # pendiente de calibrar con regla
+    "qupa_F4": 15.3,   # pendiente de calibrar con regla
+}
+v_real = 15.3          # Respaldo por defecto si el robot_id no está en ROBOT_V_REAL
+
+
+def get_v_real(robot_id=None) -> float:
+    """Devuelve v_real [cm/s] para `robot_id` desde ROBOT_V_REAL, o el respaldo `v_real`."""
+    if robot_id is not None:
+        raw = str(robot_id).strip().lstrip("/")
+        candidates = [raw, raw.lower(), raw.upper()]
+        if not raw.lower().startswith("qupa"):
+            candidates.extend([f"qupa_{raw}", f"qupa_{raw.lower()}", f"qupa_{raw.upper()}"])
+        lookup = {k.lower(): float(val) for k, val in ROBOT_V_REAL.items()}
+        for cand in candidates:
+            if cand.lower() in lookup:
+                return lookup[cand.lower()]
+    return float(v_real)
 
 
 # ============================================================================
@@ -46,8 +65,7 @@ MAX_LINEAR_SPEED_M_S    = 0.08                  # m/s
 MAX_ANGULAR_SPEED_RAD_S = 0.776                 # rad/s
 MAX_ANGULAR_SPEED_DEG_S = math.degrees(0.776)   # ~44.4615 °/s
 
-# Parámetros de respaldo para control de giros con IMU (MPU6050).
-# La fuente única de verdad son las variables globales del controlador principal.
+# Configuración centralizada de IMU (MPU6050) — fuente única de verdad para todos los controladores y scripts CLI.
 IMU_TOPIC_SUFFIX               = "mpu6050/imu/data_raw"
 IMU_TARE_SERVICE_SUFFIX        = "mpu6050/tare"
 IMU_GYRO_Z_SIGN                = 1.0     # -1.0 si el eje Z del MPU6050 apunta hacia abajo
@@ -60,7 +78,13 @@ IMU_TURN_PAUSE_S               = 0.5     # s quieto tras frenar el giro (solo si
 IMU_SETTLE_S                   = 0.3     # s de estabilización tras cada tare (solo si IMU_RETARE_EACH_SEGMENT=True)
 IMU_TARE_TIMEOUT_S             = 5.0     # s máximo de espera al servicio /tare
 IMU_TIMEOUT_FACTOR             = 2.5     # seguridad: corta un giro tras factor × tiempo esperado
-IMU_MEASURED_LINEAR_SPEED_CM_S = v_real  # respaldo sincronizado con v_real
+IMU_MEASURED_LINEAR_SPEED_CM_S = 0.0     # 0.0 -> usa ROBOT_V_REAL[robot_id] (o v_real si no está en el diccionario)
+
+# Corrección de avance en línea recta con IMU durante Fase 2 (AVANCE / reversa)
+ENABLE_IMU_STRAIGHT_HOLD       = True    # True: corrige desvíos laterales usando imu_yaw al avanzar/retroceder
+IMU_STRAIGHT_KP                = 2.2     # Ganancia proporcional [rad/s por rad de error de rumbo]
+IMU_STRAIGHT_MAX_W_RAD_S       = 0.45    # Límite de corrección angular [rad/s] (suave, sin invertir ruedas)
+IMU_STRAIGHT_DEADBAND_DEG      = 1.0     # Banda muerta [°] para ignorar ruido mínimo del giroscopio
 
 
 def _get_max_linear_cm_s() -> float:
@@ -115,6 +139,8 @@ def _ensure_imu_state(rob):
     if not hasattr(rob, 'imu_early_stop_rad'):
         init_early_deg = float(shared_config.get_controller_var("IMU_TURN_EARLY_STOP_DEG", IMU_TURN_EARLY_STOP_DEG))
         rob.imu_early_stop_rad = math.radians(max(0.0, init_early_deg))
+    if not hasattr(rob, 'imu_straight_ref_yaw'):
+        rob.imu_straight_ref_yaw = None
 
 
 def update_imu(rob, msg, now_s: float = None):
@@ -161,6 +187,7 @@ def _reset_imu_segment_state(rob):
     rob.imu_tare_start_t = 0.0
     rob.imu_settle_start_t = 0.0
     rob.imu_turn_timeout = False
+    rob.imu_straight_ref_yaw = None
 
 
 def _integrate_open_loop_pose(rob, dt: float):
@@ -351,16 +378,16 @@ def move(
     timeout_factor = float(shared_config.get_controller_var("IMU_TIMEOUT_FACTOR", IMU_TIMEOUT_FACTOR))
 
     # Prioridad de calibración lineal:
-    # 1) IMU_MEASURED_LINEAR_SPEED_CM_S > 0.0 si el controlador/CLI lo sobreescribe explícitamente
-    # 2) v_real > 0.0 definido al inicio de este archivo Functions/move.py
+    # 1) IMU_MEASURED_LINEAR_SPEED_CM_S > 0.0 si un CLI/override explícito lo fijó
+    # 2) ROBOT_V_REAL[rob.id] o respaldo v_real definidos al inicio de Functions/move.py
     # 3) 0.0 -> usa directamente speed_d
     ctrl_measured_v = float(shared_config.get_controller_var("IMU_MEASURED_LINEAR_SPEED_CM_S", 0.0))
     if ctrl_measured_v > 0.0:
         measured_v_cm = ctrl_measured_v
-    elif float(v_real) > 0.0:
-        measured_v_cm = float(v_real)
     else:
-        measured_v_cm = 0.0
+        rob_id = getattr(rob, 'id', None) or getattr(rob, 'name', None) or getattr(rob, 'robot_id', None)
+        robot_v = get_v_real(rob_id)
+        measured_v_cm = robot_v if robot_v > 0.0 else 0.0
 
     if not hasattr(rob, 'elapsed_ang_s'):
         rob.elapsed_ang_s = 0.0
@@ -559,8 +586,25 @@ def move(
             else:
                 rem_time_s = dis_time_needed - rob.elapsed_dis_s
                 v_cmd = max_lin_m_s * float(rob.move_controller)
+                w_corr = 0.0
+                straight_enabled = bool(
+                    shared_config.get_controller_var("ENABLE_IMU_STRAIGHT_HOLD", ENABLE_IMU_STRAIGHT_HOLD)
+                )
+                if straight_enabled and bool(getattr(rob, 'imu_received', False)):
+                    if getattr(rob, 'imu_straight_ref_yaw', None) is None:
+                        rob.imu_straight_ref_yaw = float(rob.imu_yaw)
+                    err_yaw_rad = _norm_rad(rob.imu_straight_ref_yaw - float(rob.imu_yaw))
+                    db_rad = math.radians(
+                        max(0.0, float(shared_config.get_controller_var("IMU_STRAIGHT_DEADBAND_DEG", IMU_STRAIGHT_DEADBAND_DEG)))
+                    )
+                    if abs(err_yaw_rad) > db_rad:
+                        kp_straight = float(shared_config.get_controller_var("IMU_STRAIGHT_KP", IMU_STRAIGHT_KP))
+                        max_w_straight = abs(
+                            float(shared_config.get_controller_var("IMU_STRAIGHT_MAX_W_RAD_S", IMU_STRAIGHT_MAX_W_RAD_S))
+                        )
+                        w_corr = max(-max_w_straight, min(max_w_straight, kp_straight * err_yaw_rad))
                 rob.cmd_linear_x = v_cmd
-                rob.cmd_angular_z = 0.0
+                rob.cmd_angular_z = w_corr
 
                 step_dt = min(dt, rem_time_s)
                 # Integra (rob.x, rob.y) con la velocidad real y el yaw real del giroscopio
@@ -885,3 +929,4 @@ class Move:
     set_wheels_cm_s       = staticmethod(set_wheels_cm_s)
     clamp_cmd_vel         = staticmethod(clamp_cmd_vel)
     update_imu            = staticmethod(update_imu)
+    get_v_real            = staticmethod(get_v_real)
