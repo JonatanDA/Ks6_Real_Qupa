@@ -220,7 +220,7 @@ def Ejecutar_comportamiento(
     master_paused = False
 
     # LÓGICA DE PAUSA INTELIGENTE (usando exclusivamente el sensor /scan local)
-    if smart_masters and rob.id != "Qupa4":
+    if smart_masters :
         if prox[0] >= 0.85 and abs(prox[1]) <= 45.0:
             master_paused = True
 

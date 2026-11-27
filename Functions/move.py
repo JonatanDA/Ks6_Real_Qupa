@@ -73,7 +73,7 @@ IMU_ANGULAR_SPEED_SLOW_RAD_S   = 0.72    # rad/s en zona lenta (> 0.70 rad/s dea
 IMU_TURN_SLOW_ZONE_DEG         = 30.0    # ° finales a velocidad lenta
 IMU_TURN_EARLY_STOP_DEG        = 15.0    # ° iniciales antes de la meta para absorber inercia
 IMU_ADAPTIVE_EARLY_STOP        = True    # corrige early_stop con el sobrepaso medido en cada giro
-IMU_RETARE_EACH_SEGMENT        = True    # True: re-encera en cada vértice + pausa de frenado; False: sin espera
+IMU_RETARE_EACH_SEGMENT        = False    # True: re-encera en cada vértice + pausa de frenado; False: sin espera
 IMU_TURN_PAUSE_S               = 0.5     # s quieto tras frenar el giro (solo si IMU_RETARE_EACH_SEGMENT=True)
 IMU_SETTLE_S                   = 0.3     # s de estabilización tras cada tare (solo si IMU_RETARE_EACH_SEGMENT=True)
 IMU_TARE_TIMEOUT_S             = 5.0     # s máximo de espera al servicio /tare
@@ -323,7 +323,7 @@ def move(
     tps = float(getattr(rob, 'ticks_per_second', shared_config.get_controller_var("ticks_per_second", 4.0)))
     dt = 1.0 / tps if tps > 0.0 else 0.25
 
-    utils_mod.Temporizador_2(rob, 0.3, tps)
+    utils_mod.Temporizador_2(rob, 0.0, tps)
     if stop or rob.temp_2:
         rob.cmd_linear_x = 0.0
         rob.cmd_angular_z = 0.0
