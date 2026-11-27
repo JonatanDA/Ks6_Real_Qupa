@@ -40,7 +40,7 @@ def _require_any(candidates):
 # ============================================================================
 random.seed(time.time())
 
-ticks_per_second                    = 4
+ticks_per_second                    = 5
 max_time                            = 5000 * ticks_per_second
 Distribucion_sensores_de_proximidad = [0, -45, 45, -90, 90, 180]
 Num_cantidad_leds                   = 2
