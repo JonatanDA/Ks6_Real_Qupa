@@ -46,45 +46,34 @@ Distribucion_sensores_de_proximidad = [0, -45, 45, -90, 90, 180]
 Num_cantidad_leds                   = 2
 FOOTBOT_INTERWHEEL_DISTANCE         = 8.6
 
-factor_vel                          = 0.7
+factor_vel                          = 0.6
 speed_dem                           = 10.0 * factor_vel
-speed_dem_g                         = 44.0
+speed_dem_g                         = 40.0
 
-d_speed                             = 7.0
-g_speed                             = 44.0
+d_speed                             = 0.0
+g_speed                             = 44.46
 
 # Métricas del modelo de observación y paciencia
 # Límites físicos de saturación del robot Qupa (Gazebo y Hardware Real) y configuración IMU (MPU6050)
 MAX_LINEAR_SPEED_CM_S               = 8.0     # Velocidad lineal máxima: 8.0 cm/s (0.08 m/s)
 MAX_ANGULAR_SPEED_RAD_S             = 0.776   # Velocidad angular máxima: 0.776 rad/s (~44.46 °/s)
 
-IMU_TOPIC_SUFFIX                    = "mpu6050/imu/data_raw"
-IMU_TARE_SERVICE_SUFFIX             = "mpu6050/tare"
-IMU_GYRO_Z_SIGN                     = 1.0     # -1.0 si el eje Z del MPU6050 apunta hacia abajo
-IMU_ANGULAR_SPEED_SLOW_RAD_S        = 0.72    # rad/s en zona lenta (> 0.70 rad/s deadband físico)
-IMU_TURN_SLOW_ZONE_DEG              = 30.0    # ° finales a velocidad lenta
-IMU_TURN_EARLY_STOP_DEG             = 15.0    # ° iniciales antes de la meta para frenar por inercia
-IMU_ADAPTIVE_EARLY_STOP             = True    # Ajusta early_stop con el sobrepaso medido en cada giro
-IMU_RETARE_EACH_SEGMENT             = True    # True: re-encera en cada vértice; False: sin tare ni esperas en move()
-IMU_TURN_PAUSE_S                    = 0.5     # s de pausa de frenado (solo activo si IMU_RETARE_EACH_SEGMENT=True)
-IMU_SETTLE_S                        = 0.3     # s tras el tare antes de girar (solo si IMU_RETARE_EACH_SEGMENT=True)
-IMU_TARE_TIMEOUT_S                  = 5.0     # s máximo de espera al servicio /tare
-IMU_TIMEOUT_FACTOR                  = 2.5     # Seguridad: aborta giro tras factor × tiempo esperado
-IMU_MEASURED_LINEAR_SPEED_CM_S      = 0.0     # cm/s real medido con regla (0.0 → usa speed_dem / d_speed)
+# Configuración de IMU y v_real por robot (ROBOT_V_REAL) centralizada en Functions/move.py
 
 distance_treshold                   = 20
 
 # Parámetros completos del modelo de paciencia y exploración (propagados a apprentice_process.py)
-MAX_PATIENCE                        = 45  * ticks_per_second  # Techo de paciencia en ticks (antes 120s)
-BASE_RESTORE                        = 6  * ticks_per_second  # Restauración base Nivel 1 (antes 30s)
+MAX_PATIENCE                        = 60  * ticks_per_second  # Techo de paciencia en ticks (antes 120s)
+BASE_RESTORE                        = 12  * ticks_per_second  # Restauración base Nivel 1 (antes 30s)
 PATIENCE_LVL2_MULTIPLIER            = 2.0                     # Multiplicador de BASE_RESTORE en Nivel 2
 DECAY_RATES = {
     1: 0.30,  # 30% de pérdida por cada vez que ESE fragmento hace Nivel 1 (antes 0.15)
     2: 0.25,  # 25% de pérdida por cada vez que ESE fragmento hace Nivel 2 (antes 0.10)
     3: 0.0,   # 0% de pérdida para Nivel 3 (fragmento nuevo, restaura full)
 }
-TIEMPO_RW_SEG                       = 10                      # Duración del Random Walk en segundos (antes 60s)
-N_MAX_INTENTOS                      = 0                       # Intentos de exploración tras guardar comportamiento
+ENABLE_RANDOM_WALK                  = False                   # False: espera quieto TIEMPO_RW_SEG s; True: ejecuta RandomWalking
+TIEMPO_RW_SEG                       = 30                      # Duración de espera / Random Walk en segundos (antes 60s)
+N_MAX_INTENTOS                      = 3                       # 0 = 1 solo ciclo (aprenda o no); >=1 = intentos extra de exploración
 
 # Métricas del modelo de ActiveLearning
 back_threshold                      = 10
@@ -470,8 +459,10 @@ def apprentice(
         elif Print_tracker_trayectory_data is not None:
             Print_tracker_trayectory_data("trajectory", "Qupa4", 0, 0)
 
-        #Move.RandomWalking(rob, timer_tick)
-        Move.set_wheels_cm_s(rob, 0.0, 0.0, FOOTBOT_INTERWHEEL_DISTANCE)
+        if ENABLE_RANDOM_WALK:
+            Move.RandomWalking(rob, timer_tick)
+        else:
+            Move.set_wheels_cm_s(rob, 0.0, 0.0, FOOTBOT_INTERWHEEL_DISTANCE)
 
         if apprentice_process.rw_timer >= apprentice_process.TIEMPO_RW_TICKS:
             Move.set_wheels_cm_s(rob, 0.0, 0.0, FOOTBOT_INTERWHEEL_DISTANCE)
@@ -697,13 +688,13 @@ class Ks6ApprenticeControllerNode(Node):
         # 3) Suscripción al IMU MPU6050 (/{robot_id}/mpu6050/imu/data_raw) y cliente de /tare
         self.create_subscription(
             Imu,
-            f'/{self.robot_id}/{IMU_TOPIC_SUFFIX}',
+            f'/{self.robot_id}/{Move.IMU_TOPIC_SUFFIX}',
             self._imu_cb,
             50,
         )
         self.imu_tare_client = self.create_client(
             Trigger,
-            f'/{self.robot_id}/{IMU_TARE_SERVICE_SUFFIX}',
+            f'/{self.robot_id}/{Move.IMU_TARE_SERVICE_SUFFIX}',
         )
         self.rob.imu_tare_client = self.imu_tare_client
 
@@ -890,6 +881,7 @@ def _push_globals_to_process():
     shared_config.sync_from_controller(sys.modules[__name__])
     apprentice_process.DECAY_RATES = dict(DECAY_RATES)
     apprentice_process.PATIENCE_LVL2_MULTIPLIER = float(PATIENCE_LVL2_MULTIPLIER)
+    apprentice_process.ENABLE_RANDOM_WALK = bool(ENABLE_RANDOM_WALK)
     apprentice_process.TIEMPO_RW_SEG = float(TIEMPO_RW_SEG)
     apprentice_process.TIEMPO_RW_TICKS = int(TIEMPO_RW_SEG * ticks_per_second)
     apprentice_process.N_MAX_INTENTOS = int(N_MAX_INTENTOS)
@@ -903,7 +895,7 @@ def _sync_globals_from_process():
     global Num_cantidad_leds, FOOTBOT_INTERWHEEL_DISTANCE
     global factor_vel, speed_dem, speed_dem_g, d_speed, g_speed
     global distance_treshold, MAX_PATIENCE, BASE_RESTORE
-    global PATIENCE_LVL2_MULTIPLIER, DECAY_RATES, TIEMPO_RW_SEG, N_MAX_INTENTOS
+    global PATIENCE_LVL2_MULTIPLIER, DECAY_RATES, ENABLE_RANDOM_WALK, TIEMPO_RW_SEG, N_MAX_INTENTOS
     global back_threshold, front_threshold, max_tracking_distance, porcentaje
     global SRP_LOG_MODE, UP_LOG_MODE, AL_LOG_MODE, DEBUG_EVASION
 
@@ -922,6 +914,7 @@ def _sync_globals_from_process():
     BASE_RESTORE = apprentice_process.BASE_RESTORE
     PATIENCE_LVL2_MULTIPLIER = apprentice_process.PATIENCE_LVL2_MULTIPLIER
     DECAY_RATES = dict(apprentice_process.DECAY_RATES)
+    ENABLE_RANDOM_WALK = bool(apprentice_process.ENABLE_RANDOM_WALK)
     TIEMPO_RW_SEG = apprentice_process.TIEMPO_RW_SEG
     N_MAX_INTENTOS = apprentice_process.N_MAX_INTENTOS
     back_threshold = apprentice_process.back_threshold

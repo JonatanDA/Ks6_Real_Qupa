@@ -73,28 +73,15 @@ CAMERA_LAUNCH_FILE             = "camera.launch.py"
 WAIT_AFTER_CAMERA_SEC          = 5.0
 CAMERA_TOPIC_SUFFIX            = "camera/detections"
 
-# Parámetros IMU (mismos nombres que Ks6_apprentice_controller.py)
+# Lanzador local de IMU (los parámetros de control IMU y v_real por robot viven en Functions/move.py)
 AUTO_LAUNCH_IMU                = True     # True: lanza qupa_imu_test/mpu6050 automáticamente
 SHOW_IMU_LOGS                  = False    # True: muestra [INFO] de mpu6050 en consola
 IMU_PACKAGE                    = "qupa_imu_test"
 IMU_EXECUTABLE                 = "mpu6050"
 IMU_SUBNAMESPACE               = "mpu6050"
-IMU_TOPIC_SUFFIX               = "mpu6050/imu/data_raw"
-IMU_TARE_SERVICE_SUFFIX        = "mpu6050/tare"
 WAIT_AFTER_IMU_SEC             = 4.0
-
-IMU_GYRO_Z_SIGN                = 1.0      # -1.0 si el eje Z apunta abajo
-IMU_GYRO_SCALE                 = 1.0      # Factor de escala del giroscopio Z (default 1.0)
-IMU_ANGULAR_SPEED_SLOW_RAD_S   = 0.72     # rad/s en zona lenta (> 0.70 rad/s deadband físico)
-IMU_TURN_SLOW_ZONE_DEG         = 30.0     # ° finales a velocidad lenta
-IMU_TURN_EARLY_STOP_DEG        = 15.0     # ° iniciales antes de la meta para frenar por inercia
-IMU_ADAPTIVE_EARLY_STOP        = True     # Ajusta early_stop con el sobrepaso medido
-IMU_RETARE_EACH_SEGMENT        = True     # True: re-encera ANTES de cada giro dentro de Move.move()
+IMU_GYRO_SCALE                 = 1.0      # Multiplicador opcional por CLI (--gyro_scale) sobre Move.IMU_GYRO_Z_SIGN
 TARE_ON_FINISH                 = True     # True: ejecuta /tare al FINALIZAR toda la secuencia
-IMU_TURN_PAUSE_S               = 0.5      # s de pausa de frenado tras cada giro
-IMU_SETTLE_S                   = 0.3      # s tras el tare antes de girar
-IMU_TARE_TIMEOUT_S             = 5.0      # s máximo de espera al servicio /tare
-IMU_TIMEOUT_FACTOR             = 2.5      # Seguridad: aborta giro tras factor * tiempo esperado
 
 # Ruido sintético desactivado (el robot físico ya tiene sensores reales)
 noise_cfg = {
@@ -382,8 +369,6 @@ def run_cli():
     dt = 1.0 / float(tps)
     max_fov_cm = float(args.max_fov)
     tare_on_finish = not bool(args.no_tare_on_finish) and bool(TARE_ON_FINISH)
-    retare_each = not bool(args.no_retare_start) and bool(IMU_RETARE_EACH_SEGMENT)
-    effective_gyro_sign = float(IMU_GYRO_Z_SIGN) * float(args.gyro_scale)
     post_observe_ticks = max(0, int(args.post_ticks))
 
     # Importar ROS 2 y mensajes del robot
@@ -408,14 +393,22 @@ def run_cli():
     from Controller import apprentice_entries
     from Controller import apprentice_process
 
-    # Respetar Move.v_real por defecto salvo override explícito por CLI
+    # Todos los parámetros de IMU y v_real por robot vienen de Functions/move.py
+    retare_each = not bool(args.no_retare_start) and bool(Move.IMU_RETARE_EACH_SEGMENT)
+    effective_gyro_sign = float(Move.IMU_GYRO_Z_SIGN) * float(args.gyro_scale)
+    imu_topic_suffix = Move.IMU_TOPIC_SUFFIX
+    imu_tare_suffix = Move.IMU_TARE_SERVICE_SUFFIX
+    imu_tare_timeout_s = float(Move.imu_tare_timeout_s)
+
     if args.v_real is not None:
         active_v_real = float(args.v_real)
+        Move.ROBOT_V_REAL[robot_id] = active_v_real
         Move.v_real = active_v_real
         v_real_source = "CLI --v_real"
     else:
-        active_v_real = float(getattr(Move, "v_real", 0.0))
-        v_real_source = "Functions/move.py (v_real)"
+        active_v_real = float(Move.get_v_real(robot_id))
+        in_dict = any(k.lower() == robot_id.lower() for k in Move.ROBOT_V_REAL)
+        v_real_source = f"Functions/move.py (ROBOT_V_REAL['{robot_id}'])" if in_dict else "Functions/move.py (v_real)"
 
     # Overrides opcionales de cámara para pruebas rápidas de calibración
     if args.cam_angle_sign is not None:
@@ -423,20 +416,12 @@ def run_cli():
     if args.cam_angle_offset is not None:
         apprentice_entries.CAMERA_ANGLE_OFFSET_DEG = float(args.cam_angle_offset)
 
-    # Propagar configuración al módulo activo, shared_config, Move y apprentice_process
+    # Propagar solo lo de este CLI (sin pisar el resto de parámetros IMU de Functions/move.py)
     cfg_vars = {
         "ticks_per_second": tps,
         "FOOTBOT_INTERWHEEL_DISTANCE": FOOTBOT_INTERWHEEL_DISTANCE,
         "IMU_GYRO_Z_SIGN": effective_gyro_sign,
-        "IMU_ANGULAR_SPEED_SLOW_RAD_S": IMU_ANGULAR_SPEED_SLOW_RAD_S,
-        "IMU_TURN_SLOW_ZONE_DEG": IMU_TURN_SLOW_ZONE_DEG,
-        "IMU_TURN_EARLY_STOP_DEG": IMU_TURN_EARLY_STOP_DEG,
-        "IMU_ADAPTIVE_EARLY_STOP": IMU_ADAPTIVE_EARLY_STOP,
         "IMU_RETARE_EACH_SEGMENT": retare_each,
-        "IMU_TURN_PAUSE_S": IMU_TURN_PAUSE_S,
-        "IMU_SETTLE_S": IMU_SETTLE_S,
-        "IMU_TARE_TIMEOUT_S": IMU_TARE_TIMEOUT_S,
-        "IMU_TIMEOUT_FACTOR": IMU_TIMEOUT_FACTOR,
         "IMU_MEASURED_LINEAR_SPEED_CM_S": active_v_real,
         "noise_cfg": noise_cfg,
     }
@@ -484,10 +469,10 @@ def run_cli():
             )
             self.rob.odom_received = False
             self.rob.latest_detections = []
-            self.imu_tare_client = self.create_client(Trigger, f"/{robot_id}/{IMU_TARE_SERVICE_SUFFIX}")
+            self.imu_tare_client = self.create_client(Trigger, f"/{robot_id}/{imu_tare_suffix}")
             self.rob.imu_tare_client = self.imu_tare_client
 
-            self.create_subscription(Imu, f"/{robot_id}/{IMU_TOPIC_SUFFIX}", self._imu_cb, 50)
+            self.create_subscription(Imu, f"/{robot_id}/{imu_topic_suffix}", self._imu_cb, 50)
             self.create_subscription(Twist, f"/{robot_id}/cmd_vel", self._cmd_vel_cb, 50)
             self.create_subscription(
                 DetectionArray,
@@ -551,12 +536,12 @@ def run_cli():
 
         def call_tare(self, reason: str = "manual") -> bool:
             if not self.imu_tare_client.service_is_ready():
-                print(f"[IMU] Servicio /{robot_id}/{IMU_TARE_SERVICE_SUFFIX} no está listo aún.", flush=True)
+                print(f"[IMU] Servicio /{robot_id}/{imu_tare_suffix} no está listo aún.", flush=True)
                 return False
             print(f"[IMU] Ejecutando /tare ({reason}) — mantén el robot quieto...", flush=True)
             fut = self.imu_tare_client.call_async(Trigger.Request())
             t0 = time.monotonic()
-            while not fut.done() and (time.monotonic() - t0) < IMU_TARE_TIMEOUT_S:
+            while not fut.done() and (time.monotonic() - t0) < imu_tare_timeout_s:
                 time.sleep(0.05)
             if fut.done():
                 try:
@@ -570,7 +555,7 @@ def run_cli():
                 except Exception as exc:
                     print(f"[IMU] Error en respuesta de /tare: {exc}", flush=True)
                     return False
-            print(f"[IMU] Timeout ({IMU_TARE_TIMEOUT_S:.1f}s) esperando /tare.", flush=True)
+            print(f"[IMU] Timeout ({imu_tare_timeout_s:.1f}s) esperando /tare.", flush=True)
             return False
 
     node = ApprenticeTestNode()
@@ -589,7 +574,7 @@ def run_cli():
         f"ANGLE_OFFSET={apprentice_entries.CAMERA_ANGLE_OFFSET_DEG:+.2f}° | FOV={max_fov_cm:.1f} cm"
     )
     print(f" IMU: gyro_z={effective_gyro_sign:+.3f} | tare_inicio={retare_each} | tare_fin={tare_on_finish}")
-    print(f" Tópicos: /{robot_id}/cmd_vel | /{robot_id}/{CAMERA_TOPIC_SUFFIX} | /{robot_id}/{IMU_TOPIC_SUFFIX}")
+    print(f" Tópicos: /{robot_id}/cmd_vel | /{robot_id}/{CAMERA_TOPIC_SUFFIX} | /{robot_id}/{imu_topic_suffix}")
     if csv_logger.filepath:
         print(f" CSV log: {csv_logger.filepath}")
 
@@ -820,7 +805,7 @@ def run_cli():
     try:
         # 1) Esperar confirmación obligatoria de IMU y Cámara
         print(
-            f"\n[INIT] Esperando IMU (/{robot_id}/{IMU_TOPIC_SUFFIX}) y Cámara (/{robot_id}/{CAMERA_TOPIC_SUFFIX})...",
+            f"\n[INIT] Esperando IMU (/{robot_id}/{imu_topic_suffix}) y Cámara (/{robot_id}/{CAMERA_TOPIC_SUFFIX})...",
             flush=True,
         )
         t_wait = time.monotonic()

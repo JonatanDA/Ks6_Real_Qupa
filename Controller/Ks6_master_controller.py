@@ -34,39 +34,27 @@ random.seed(time.time())
 # - motor_driver_node tiene un watchdog de 0.3s (requiere ticks_per_second >= 4, recomendable 8-10 en físico)
 #   y un deadband de 0.03 m/s por rueda con wheel_base = 0.086 m (para girar en su propio eje en el
 #   robot físico se requiere velocidad angular >= 42 °/s, ej. speed_dem_g = 45, g_speed                             = 44.46).
-ticks_per_second                    = 16
+ticks_per_second                    = 8
 max_time                            = 5000 * ticks_per_second
 Distribucion_sensores_de_proximidad = [0, -45, 45, -90, 90, 180]
 Num_cantidad_leds                   = 2
 FOOTBOT_INTERWHEEL_DISTANCE         = 8.6
 
-factor_vel                          = 0.7
+factor_vel                          = 1.2
 speed_dem                           = 10.0 * factor_vel
 # speed_dem_g                         = (speed_dem / 2)
-speed_dem_g                         = 44.0
+speed_dem_g                         = 40.0
 
-d_speed                             = 7.0
-g_speed                             = 44 
+d_speed                             = 8.0
+g_speed                             = 44.46
 
 # Límites físicos y configuración del IMU (MPU6050) — fuente única de verdad
 MAX_LINEAR_SPEED_CM_S               = 16.0     # Velocidad lineal máxima: 16.0 cm/s (0.16 m/s)
 MAX_ANGULAR_SPEED_RAD_S             = 0.776   # Velocidad angular máxima: 0.776 rad/s (~44.46 °/s)
-IMU_TOPIC_SUFFIX                    = "mpu6050/imu/data_raw"
-IMU_TARE_SERVICE_SUFFIX             = "mpu6050/tare"
-IMU_GYRO_Z_SIGN                     = 1.0     # -1.0 si el eje Z del MPU6050 apunta hacia abajo
-IMU_ANGULAR_SPEED_SLOW_RAD_S        = 0.72    # rad/s en zona lenta (> 0.70 rad/s deadband físico)
-IMU_TURN_SLOW_ZONE_DEG              = 30.0    # ° finales a velocidad lenta
-IMU_TURN_EARLY_STOP_DEG             = 15.0    # ° iniciales antes de la meta para frenar por inercia
-IMU_ADAPTIVE_EARLY_STOP             = True    # Ajusta early_stop con el sobrepaso medido en cada giro
-IMU_RETARE_EACH_SEGMENT             = True    # True: re-encera en cada vértice; False: sin tare ni esperas en move()
-IMU_TURN_PAUSE_S                    = 0.5     # s de pausa de frenado (solo activo si IMU_RETARE_EACH_SEGMENT=True)
-IMU_SETTLE_S                        = 0.3     # s tras el tare antes de girar (solo si IMU_RETARE_EACH_SEGMENT=True)
-IMU_TARE_TIMEOUT_S                  = 5.0     # s máximo de espera al servicio /tare
-IMU_TIMEOUT_FACTOR                  = 2.5     # Seguridad: aborta giro tras factor × tiempo esperado
-IMU_MEASURED_LINEAR_SPEED_CM_S      = 15.3     # cm/s real medido con regla (0.0 → usa speed_dem / d_speed) 
+# Configuración de IMU y v_real por robot (ROBOT_V_REAL) centralizada en Functions/move.py
 
 # Pausa con LEDs apagados al finalizar cada repetición del comportamiento (en segundos)
-PAUSA_FIN_PATRON_SEG                = 8.0
+PAUSA_FIN_PATRON_SEG                = 3.0
 
 # Asignación de figura según ID del robot Maestro
 distance_factor = 1
@@ -184,7 +172,7 @@ d1                  = 2
 master_avg_dist     = 0
 master_indice       = 0
 EAEP_c1             = 0
-SMART_MASTERS       = False
+SMART_MASTERS       = True
 indice              = 1
 PI_end              = False
 PI_counter_seg      = 0
@@ -517,13 +505,13 @@ class Ks6MasterControllerNode(Node):
         # Suscripción al IMU MPU6050 (/{robot_id}/mpu6050/imu/data_raw) y cliente de /tare
         self.create_subscription(
             Imu,
-            f'/{self.robot_id}/{IMU_TOPIC_SUFFIX}',
+            f'/{self.robot_id}/{Move.IMU_TOPIC_SUFFIX}',
             self._imu_cb,
             50,
         )
         self.imu_tare_client = self.create_client(
             Trigger,
-            f'/{self.robot_id}/{IMU_TARE_SERVICE_SUFFIX}',
+            f'/{self.robot_id}/{Move.IMU_TARE_SERVICE_SUFFIX}',
         )
         self.rob.imu_tare_client = self.imu_tare_client
 
