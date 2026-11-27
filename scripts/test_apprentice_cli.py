@@ -57,7 +57,7 @@ for _p in (_PROJECT_ROOT, os.path.join(_PROJECT_ROOT, "Controller"), os.path.joi
 #                      VARIABLES CONFIGURABLES DE CALIBRACIÓN
 # ============================================================================
 DEFAULT_ROBOT_ID               = "qupa_AE"
-TICKS_PER_SECOND               = 4        # 4 Hz (misma frecuencia que Ks6_apprentice_controller.py)
+TICKS_PER_SECOND               = 5        # 4 Hz (misma frecuencia que Ks6_apprentice_controller.py)
 FOOTBOT_INTERWHEEL_DISTANCE    = 8.6      # cm (wheel_base = 0.086 m)
 MAX_FOV_RADIUS_CM              = 70.0     # cm (igual que self.max_fov_radius_cm en Ks6_apprentice_controller.py)
 
